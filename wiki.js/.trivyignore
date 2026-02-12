@@ -1,0 +1,21 @@
+## One of the reasons this file is here is simply because on occasion Trivy will expect AVD-AWS and other times simply AWS.
+
+# AVD-AWS-0011 — Distribution does not utilize a WAF
+# Resource: aws_cloudfront_distribution.wiki (cloudfront.tf)
+# Reason: WAF is costly for this implementation. Ideally would front via CloudFlare but work needs to be done to move out of AWS R53.
+AVD-AWS-0011
+
+# AVD-AWS-0104 — Security group rule allows egress to 0.0.0.0/0
+# Resource: aws_vpc_security_group_egress_rule.all (ec2.tf)
+# Reason: Instance needs outbound access for Docker pulls, OS updates, and SSM connectivity.
+AVD-AWS-0104
+
+# AVD-AWS-0131 — EBS volume encryption not enabled
+# Resource: aws_instance.wiki root_block_device (ec2.tf)
+# Reason: Non-sensitive wiki documentation only. Encrypted volumes add complexity for recovery with no meaningful security benefit here.
+AVD-AWS-0131
+
+# AVD-AWS-0164 — Subnet assigns public IP by default
+# Resource: aws_subnet.public (vpc.tf)
+# Reason: These are intentionally public subnets. The EC2 instance needs a public IP for internet/SSM access without a NAT gateway.
+AVD-AWS-0164

@@ -1,0 +1,64 @@
+repos:
+  # Terraform
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.96.3
+    hooks:
+      - id: terraform_fmt
+      - id: terraform_validate
+      - id: terraform_tflint
+      - id: terraform_docs
+        args:
+          - --args=--config=.terraform-docs.yml
+      - id: terraform_trivy
+        args:
+          - --args=--severity=HIGH,CRITICAL
+          - --args=--ignorefile=.trivyignore
+
+  # Terraform tests (requires AWS credentials)
+  - repo: local
+    hooks:
+      - id: terraform_test
+        name: terraform test
+        entry: bash -c 'for dir in $(find . -name "*.tftest.hcl" -exec dirname {} \; | xargs -I{} dirname {} | sort -u); do terraform -chdir="$dir" test; done'
+        language: system
+        files: \.(tf|tftest\.hcl)$
+        pass_filenames: false
+
+  # Cost estimation — runs before file hygiene so whitespace gets cleaned up
+  - repo: local
+    hooks:
+      - id: infracost
+        name: infracost
+        entry: ./scripts/update-infracost.sh
+        language: system
+        files: \.tf$
+        pass_filenames: false
+
+  # General file hygiene (runs after generators so it cleans up their output)
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: no-commit-to-branch
+        args: ["--branch", "main"]
+
+  # Secret scanning
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.22.1
+    hooks:
+      - id: gitleaks
+
+  # Policy-as-code (uses system-installed checkov — brew install checkov)
+  - repo: local
+    hooks:
+      - id: checkov
+        name: checkov
+        entry: checkov --framework terraform --quiet --compact --config-file wiki.js/.checkov.yml
+        language: system
+        files: \.tf$
+        pass_filenames: false
