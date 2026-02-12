@@ -13,3 +13,9 @@ resource "aws_acm_certificate" "wiki" {
     environment = var.environment
   }
 }
+
+resource "aws_acm_certificate_validation" "wiki" {
+  provider = aws.us_east_1
+
+  certificate_arn = aws_acm_certificate.wiki.arn
+}
