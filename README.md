@@ -64,3 +64,16 @@ pre-commit run --all-files
 | `infracost` | Cost estimation for infrastructure changes |
 | `detect-private-key` | Blocks commits containing private keys |
 | `no-commit-to-branch` | Prevents direct commits to main |
+
+## GitHub Actions
+
+CI runs on every PR to `main`. The following **repository secrets** must be configured under *Settings → Secrets and variables → Actions*:
+
+| Secret | Used by | Purpose |
+|---|---|---|
+| `AWS_ACCESS_KEY_ID` | Terraform CI | AWS credentials for `terraform plan` and tests |
+| `AWS_SECRET_ACCESS_KEY` | Terraform CI | AWS credentials for `terraform plan` and tests |
+| `AWS_DEFAULT_REGION` | Terraform CI | AWS region (e.g. `ap-southeast-2`) |
+| `INFRACOST_API_KEY` | Infracost | API key from `infracost auth login` |
+
+> `GITHUB_TOKEN` is provided automatically — no setup needed.
