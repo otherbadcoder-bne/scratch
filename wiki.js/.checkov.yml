@@ -18,6 +18,9 @@
 # EC2
 #   CKV_AWS_135  — EBS optimised (not needed for t3.micro wiki)
 #   CKV_AWS_126  — Detailed monitoring (unnecessary cost)
+#
+# Eventbridge
+# CKV_AWS_297 -- CMK - no need for encryption, inter AWS Traffic covered by AWS default encryption and data isn't precious
 
 skip-check:
   - CKV2_AWS_11
@@ -32,3 +35,4 @@ skip-check:
   - CKV2_AWS_47
   - CKV_AWS_135
   - CKV_AWS_126
+  - CKV_AWS_297

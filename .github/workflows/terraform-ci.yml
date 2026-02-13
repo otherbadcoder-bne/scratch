@@ -112,7 +112,7 @@ jobs:
 
       - name: Terraform Plan
         id: plan
-        run: terraform -chdir=wiki.js plan -var="domain_name=placeholder.example.com" -no-color -input=false -out=/tmp/tfplan
+        run: terraform -chdir=wiki.js plan -var="domain_name=placeholder.example.com" -var="access_token=placeholder" -no-color -input=false -out=/tmp/tfplan
         continue-on-error: true
 
       - name: Render Plan

@@ -1,5 +1,7 @@
 variables {
-  domain_name = "wiki.test.example.com"
+  domain_name      = "wiki.test.example.com"
+  access_token     = "test-token"
+  schedule_enabled = true
 }
 
 run "instance_type_defaults_to_t3_micro" {
@@ -84,5 +86,24 @@ run "no_ssh_ingress_rule" {
   assert {
     condition     = aws_vpc_security_group_ingress_rule.cloudfront.from_port != 22
     error_message = "There must be no SSH ingress rule"
+  }
+}
+
+run "scheduler_creates_stop_and_start_schedules" {
+  command = plan
+
+  assert {
+    condition     = aws_scheduler_schedule.wiki_stop[0].schedule_expression == "cron(0 19 ? * MON-FRI *)"
+    error_message = "Stop schedule must run at 7pm AEST on weekdays"
+  }
+
+  assert {
+    condition     = aws_scheduler_schedule.wiki_start[0].schedule_expression == "cron(0 5 ? * MON-FRI *)"
+    error_message = "Start schedule must run at 5am AEST on weekdays"
+  }
+
+  assert {
+    condition     = aws_scheduler_schedule.wiki_stop[0].schedule_expression_timezone == "Australia/Brisbane"
+    error_message = "Schedules must use Australia/Brisbane timezone"
   }
 }

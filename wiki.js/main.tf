@@ -9,8 +9,10 @@ terraform {
   }
 }
 
-# Default provider — region comes from AWS_DEFAULT_REGION / AWS_REGION env var
-provider "aws" {}
+# Default provider
+provider "aws" {
+  region = "ap-southeast-2"
+}
 
 # CloudFront requires ACM certificates in us-east-1
 provider "aws" {
