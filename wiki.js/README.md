@@ -4,9 +4,32 @@ Terraform project to deploy Wiki.js on AWS with CloudFront, EC2, and SSM access.
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    User((User)) -->|HTTPS + secret prefix| CF[CloudFront]
+    CF -->|viewer-request| Fn[CloudFront Function<br/>Access Gate]
+    Fn -->|valid token → set cookie| CF
+    Fn -->|no token → 403| User
+    CF -->|HTTP :3000| EC2[EC2<br/>Wiki.js + PostgreSQL]
+    EC2 --- SG[Security Group<br/>CloudFront prefix list only]
+    EC2 -.- SSM[SSM Session Manager]
+    Admin((Admin)) -->|aws ssm start-session| SSM
+
+    subgraph VPC
+        subgraph Public Subnet
+            EC2
+        end
+        IGW[Internet Gateway]
+    end
+
+    CF ---|ACM TLS cert| ACM[ACM<br/>us-east-1]
+    DNS[Route53 / DNS] -->|CNAME| CF
+```
+
 - **VPC** — Shared services VPC with public/private subnets across 3 AZs
 - **EC2** — Amazon Linux 2023 running Wiki.js + PostgreSQL via Docker Compose
 - **CloudFront** — TLS termination, no need to manage IP-based security groups
+- **CloudFront Function** — Access gate that requires a secret path prefix ("knock") to reach Wiki.js; all other requests receive a generic 403
 - **ACM** — DNS-validated certificate (created in us-east-1 for CloudFront)
 - **SSM** — Session Manager for shell access (no SSH keys or port 22)
 
@@ -100,6 +123,16 @@ The instance ID is included in the Terraform outputs.
 
 Code is scanned by both Trivy and Checkov to ensure nothing slips through the net.
 This assists in making sure a high level of security is maintained.
+
+## Security Decisions
+
+### No WAF
+
+Both Trivy and Checkov flag the absence of AWS WAF on the CloudFront distribution. AWS WAF adds a minimum of ~$6-10/month (WebACL + rule groups), which nearly doubles the baseline infrastructure cost (~$12/month). For a small internal wiki behind Google OAuth and the CloudFront Function access gate, the cost-benefit does not justify it. This will be reconsidered if the wiki becomes more widely used or handles sensitive data.
+
+### Access Gate
+
+The CloudFront Function acts as a lightweight "knock" layer. Users must know a secret path prefix to reach the site — without it, CloudFront returns a generic 403 with no indication a wiki exists behind it. On first valid request the function sets a `Secure; HttpOnly; SameSite=Strict` session cookie so that subsequent requests (assets, API calls, etc.) pass through without the prefix.
 
 ## Terraform Docs
 

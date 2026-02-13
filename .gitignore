@@ -37,3 +37,6 @@ Desktop.ini
 
 # Infracost
 .infracost/
+
+# Swark
+swark-output/
