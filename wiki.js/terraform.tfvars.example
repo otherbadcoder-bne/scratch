@@ -3,3 +3,4 @@ domain_name = "wiki.example.com"
 # instance_type = "t3.micro"
 # environment   = "shared-services"
 access_token = "super-secret-token"
+# schedule_enabled = true

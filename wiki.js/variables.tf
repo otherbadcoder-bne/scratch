@@ -26,3 +26,9 @@ variable "environment" {
   type        = string
   default     = "shared-services"
 }
+
+variable "schedule_enabled" {
+  description = "Enable automatic stop/start schedule for the EC2 instance"
+  type        = bool
+  default     = true
+}

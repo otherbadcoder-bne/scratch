@@ -5,6 +5,8 @@ All notable changes to the Wiki.js infrastructure project are documented here.
 ## 2026-02-13
 
 ### Added
+- **Scheduled stop/start** — EventBridge Scheduler stops the EC2 instance at 7pm AEST and starts it at 5am AEST on weekdays (covers 8am NZST for NZ users). Uses SSM Automation (`AWS-StopEC2Instances` / `AWS-StartEC2Instances`) with no Lambda required.
+- `schedule_enabled` variable to toggle the stop/start schedule (default: `true`).
 - **CloudFront Function access gate** — secret path-prefix "knock" that sets a session cookie, preventing unauthorised discovery of the Wiki.js instance. Requests without the token receive a generic 403.
 - `access_token` variable (`sensitive`) to configure the secret prefix.
 
