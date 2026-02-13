@@ -56,13 +56,16 @@ Project: main
     ├─ HTTP requests                                  Monthly cost depends on usage: $0.0075 per 10k requests
     └─ HTTPS requests                                 Monthly cost depends on usage: $0.01 per 10k requests
 
+ aws_cloudfront_function.access_gate
+ └─ Total number of invocations                       Monthly cost depends on usage: $0.10 per 1M invocations
+
  OVERALL TOTAL                                                                                        $11.56
 
 *Usage costs can be estimated by updating Infracost Cloud settings, see docs for other options.
 
 ──────────────────────────────────
-31 cloud resources were detected:
-∙ 2 were estimated
+32 cloud resources were detected:
+∙ 3 were estimated
 ∙ 29 were free
 
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┓
@@ -126,6 +129,7 @@ No modules.
 | [aws_acm_certificate.wiki](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/acm_certificate) | resource |
 | [aws_acm_certificate_validation.wiki](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/acm_certificate_validation) | resource |
 | [aws_cloudfront_distribution.wiki](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudfront_distribution) | resource |
+| [aws_cloudfront_function.access_gate](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudfront_function) | resource |
 | [aws_cloudfront_response_headers_policy.security](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudfront_response_headers_policy) | resource |
 | [aws_default_network_acl.default](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/default_network_acl) | resource |
 | [aws_default_security_group.default](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/default_security_group) | resource |
@@ -156,6 +160,7 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
+| <a name="input_access_token"></a> [access\_token](#input\_access\_token) | Secret path prefix required to access Wiki.js (e.g. 'mysecret123') | `string` | n/a | yes |
 | <a name="input_domain_name"></a> [domain\_name](#input\_domain\_name) | Domain name for the Wiki.js site (e.g. wiki.example.com) | `string` | n/a | yes |
 | <a name="input_environment"></a> [environment](#input\_environment) | Environment name used for tagging | `string` | `"shared-services"` | no |
 | <a name="input_instance_type"></a> [instance\_type](#input\_instance\_type) | EC2 instance type for the Wiki.js server | `string` | `"t3.micro"` | no |

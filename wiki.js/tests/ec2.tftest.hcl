@@ -1,5 +1,6 @@
 variables {
-  domain_name = "wiki.test.example.com"
+  domain_name  = "wiki.test.example.com"
+  access_token = "test-token"
 }
 
 run "instance_type_defaults_to_t3_micro" {

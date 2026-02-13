@@ -1,5 +1,6 @@
 variables {
-  domain_name = "wiki.test.example.com"
+  domain_name  = "wiki.test.example.com"
+  access_token = "test-token"
 }
 
 run "vpc_has_dns_enabled" {
