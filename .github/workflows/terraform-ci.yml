@@ -115,6 +115,12 @@ jobs:
         run: terraform -chdir=wiki.js plan -var="domain_name=placeholder.example.com" -var="access_token=placeholder" -no-color -input=false -out=/tmp/tfplan
         continue-on-error: true
 
+      - name: Validate IAM Policies
+        if: steps.plan.outcome == 'success'
+        run: |
+          terraform -chdir=wiki.js show -json /tmp/tfplan > /tmp/tfplan.json
+          wiki.js/scripts/validate-iam-policies.sh /tmp/tfplan.json
+
       - name: Render Plan
         if: always()
         run: |
