@@ -7,13 +7,31 @@ resource "aws_cloudfront_function" "access_gate" {
   code = <<-JSEOF
     var TOKEN = '${var.access_token}';
     var PREFIX = '/' + TOKEN;
+    var COOKIE_NAME = '__wiki_access';
 
     function handler(event) {
       var request = event.request;
       var uri = request.uri;
 
+      // Knock: token in path sets a cookie and redirects to clean URL
       if (uri === PREFIX || uri.startsWith(PREFIX + '/')) {
-        request.uri = uri.substring(PREFIX.length) || '/';
+        var destination = uri.substring(PREFIX.length) || '/';
+        return {
+          statusCode: 302,
+          statusDescription: 'Found',
+          headers: {
+            'location': { value: destination },
+            'cache-control': { value: 'no-store' }
+          },
+          cookies: {
+            '__wiki_access': { value: TOKEN, attributes: 'Path=/; Secure; HttpOnly; SameSite=Strict' }
+          }
+        };
+      }
+
+      // Subsequent requests: check for the cookie
+      var cookies = request.cookies || {};
+      if (cookies[COOKIE_NAME] && cookies[COOKIE_NAME].value === TOKEN) {
         return request;
       }
 
