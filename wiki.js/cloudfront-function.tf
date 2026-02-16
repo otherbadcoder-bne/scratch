@@ -35,6 +35,11 @@ resource "aws_cloudfront_function" "access_gate" {
         return request;
       }
 
+      // Allow API clients with Authorization header to reach /graphql
+      if (uri === '/graphql' && request.headers['authorization']) {
+        return request;
+      }
+
       return {
         statusCode: 403,
         statusDescription: 'Forbidden',
