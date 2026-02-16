@@ -5,24 +5,22 @@ Terraform project to deploy Wiki.js on AWS with CloudFront, EC2, and SSM access.
 ## Architecture
 
 ```mermaid
-flowchart LR
+graph LR
     User((User)) -->|HTTPS + secret prefix| CF[CloudFront]
-    CF -->|viewer-request| Fn[CloudFront Function<br/>Access Gate]
-    Fn -->|valid token → set cookie| CF
-    Fn -->|no token → 403| User
-    CF -->|HTTP :3000| EC2[EC2<br/>Wiki.js + PostgreSQL]
-    EC2 --- SG[Security Group<br/>CloudFront prefix list only]
-    EC2 -.- SSM[SSM Session Manager]
+    CF -->|viewer-request| Fn[CloudFront Function: Access Gate]
+    Fn -->|valid token: set cookie| CF
+    Fn -->|no token: 403| User
+    CF -->|HTTP :3000| EC2[EC2: Wiki.js + PostgreSQL]
+    EC2 --- SG[Security Group: CloudFront only]
+    EC2 -.-> SSM[SSM Session Manager]
     Admin((Admin)) -->|aws ssm start-session| SSM
 
     subgraph VPC
-        subgraph Public Subnet
-            EC2
-        end
+        EC2
         IGW[Internet Gateway]
     end
 
-    CF ---|ACM TLS cert| ACM[ACM<br/>us-east-1]
+    CF ---|ACM TLS cert| ACM[ACM: us-east-1]
     DNS[Route53 / DNS] -->|CNAME| CF
 ```
 
