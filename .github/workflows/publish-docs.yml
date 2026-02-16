@@ -1,0 +1,55 @@
+name: Publish Docs to Wiki.js
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "wiki.js/README.md"
+      - ".github/workflows/publish-docs.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish to Wiki.js
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Publish README to Wiki.js
+        env:
+          WIKIJS_URL: ${{ secrets.WIKIJS_URL }}
+          WIKIJS_API_KEY: ${{ secrets.WIKIJS_API_KEY }}
+        run: |
+          PAGE_PATH="wiki-js"
+          TITLE="Wiki.js on AWS"
+          CONTENT=$(jq -Rs . < wiki.js/README.md)
+
+          # Check if the page already exists
+          RESPONSE=$(curl -sf "${WIKIJS_URL}/graphql" \
+            -H "Authorization: Bearer ${WIKIJS_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{\"query\": \"{ pages { singleByPath(path: \\\"${PAGE_PATH}\\\", locale: \\\"en\\\") { id } } }\"}")
+
+          PAGE_ID=$(echo "$RESPONSE" | jq -r '.data.pages.singleByPath.id // empty')
+
+          if [ -n "$PAGE_ID" ] && [ "$PAGE_ID" != "null" ]; then
+            echo "Updating existing page (ID: ${PAGE_ID})..."
+            curl -sf "${WIKIJS_URL}/graphql" \
+              -H "Authorization: Bearer ${WIKIJS_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"query\": \"mutation (\$id: Int!, \$content: String!) { pages { update(id: \$id, content: \$content, isPublished: true) { responseResult { succeeded message } } } }\",
+                \"variables\": { \"id\": ${PAGE_ID}, \"content\": ${CONTENT} }
+              }" | jq -r '.data.pages.update.responseResult.message'
+          else
+            echo "Creating new page at /${PAGE_PATH}..."
+            curl -sf "${WIKIJS_URL}/graphql" \
+              -H "Authorization: Bearer ${WIKIJS_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"query\": \"mutation (\$content: String!, \$path: String!, \$title: String!) { pages { create(content: \$content, path: \$path, title: \$title, locale: \\\"en\\\", isPublished: true, isPrivate: false, editor: \\\"markdown\\\", tags: []) { responseResult { succeeded message } page { id } } } }\",
+                \"variables\": { \"content\": ${CONTENT}, \"path\": \"${PAGE_PATH}\", \"title\": \"${TITLE}\" }
+              }" | jq -r '.data.pages.create.responseResult.message'
+          fi
