@@ -22,74 +22,67 @@ jobs:
           WIKIJS_URL: ${{ secrets.WIKIJS_URL }}
           WIKIJS_API_KEY: ${{ secrets.WIKIJS_API_KEY }}
         run: |
-          set -euo pipefail
+          python3 << 'PYEOF'
+          import json, os, sys, urllib.request
 
-          PAGE_PATH="wiki-js"
-          TITLE="Wiki.js on AWS"
-
-          # Helper to call Wiki.js GraphQL API
-          wikijs_query() {
-            local payload_file="$1"
-            echo "Sending $(wc -c < "$payload_file" | tr -d ' ') bytes to ${WIKIJS_URL}/graphql"
-            local http_response
-            http_response=$(curl -s -w "\n%{http_code}" "${WIKIJS_URL}/graphql" \
-              -H "Authorization: Bearer ${WIKIJS_API_KEY}" \
-              -H "Content-Type: application/json" \
-              --data-binary "@${payload_file}") || {
-              echo "::error::curl failed with exit code $?"
-              exit 1
-            }
-            local http_code body
-            http_code=$(echo "$http_response" | tail -1)
-            body=$(echo "$http_response" | sed '$d')
-            echo "HTTP ${http_code}"
-
-            if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
-              echo "::error::Wiki.js API returned HTTP ${http_code}: ${body}"
-              exit 1
-            fi
-            echo "$body"
+          url = os.environ["WIKIJS_URL"] + "/graphql"
+          headers = {
+              "Authorization": f"Bearer {os.environ['WIKIJS_API_KEY']}",
+              "Content-Type": "application/json",
           }
+          page_path = "wiki-js"
+          title = "Wiki.js on AWS"
 
-          # List all pages to find if ours exists
-          echo "Checking for existing page at /${PAGE_PATH}..."
-          jq -n '{query: "{ pages { list(orderBy: TITLE) { id, path } } }"}' > /tmp/wikijs_lookup.json
-          RESPONSE=$(wikijs_query /tmp/wikijs_lookup.json)
-          PAGE_ID=$(echo "$RESPONSE" | jq -r --arg path "$PAGE_PATH" '[.data.pages.list[] | select(.path == $path) | .id] | first // empty')
-          echo "Page ID: '${PAGE_ID}'"
+          def graphql(query, variables=None):
+              payload = json.dumps({"query": query, "variables": variables or {}}).encode()
+              req = urllib.request.Request(url, data=payload, headers=headers)
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      return json.loads(resp.read())
+              except urllib.error.HTTPError as e:
+                  body = e.read().decode()
+                  print(f"::error::Wiki.js API returned HTTP {e.code}: {body}")
+                  sys.exit(1)
 
-          if [ -n "$PAGE_ID" ]; then
-            echo "Updating existing page (ID: ${PAGE_ID})..."
-            jq -n \
-              --argjson id "$PAGE_ID" \
-              --rawfile content wiki.js/README.md \
-              '{
-                query: "mutation ($id: Int!, $content: String!) { pages { update(id: $id, content: $content, isPublished: true) { responseResult { succeeded, message } } } }",
-                variables: { id: $id, content: $content }
-              }' > /tmp/wikijs_payload.json || { echo "::error::Failed to build update payload"; exit 1; }
-          else
-            echo "Creating new page at /${PAGE_PATH}..."
-            jq -n \
-              --rawfile content wiki.js/README.md \
-              --arg path "$PAGE_PATH" \
-              --arg title "$TITLE" \
-              '{
-                query: "mutation ($content: String!, $path: String!, $title: String!) { pages { create(content: $content, description: \"\", editor: \"markdown\", isPublished: true, isPrivate: false, locale: \"en\", path: $path, tags: [], title: $title) { responseResult { succeeded, message } page { id } } } }",
-                variables: { content: $content, path: $path, title: $title }
-              }' > /tmp/wikijs_payload.json || { echo "::error::Failed to build create payload"; exit 1; }
-          fi
+          # Check if the page already exists
+          print(f"Checking for existing page at /{page_path}...")
+          result = graphql("{ pages { list(orderBy: TITLE) { id, path } } }")
+          pages = result.get("data", {}).get("pages", {}).get("list", [])
+          existing = next((p for p in pages if p["path"] == page_path), None)
 
-          echo "Payload built successfully"
-          RESULT=$(wikijs_query /tmp/wikijs_payload.json)
-          echo "API response: ${RESULT}"
+          content = open("wiki.js/README.md").read()
 
-          SUCCEEDED=$(echo "$RESULT" | jq -r '(.data.pages.create // .data.pages.update).responseResult.succeeded')
-          MESSAGE=$(echo "$RESULT" | jq -r '(.data.pages.create // .data.pages.update).responseResult.message')
-          echo "${SUCCEEDED}: ${MESSAGE}"
+          if existing:
+              page_id = existing["id"]
+              print(f"Updating existing page (ID: {page_id})...")
+              result = graphql(
+                  """mutation ($id: Int!, $content: String!) {
+                      pages { update(id: $id, content: $content, isPublished: true) {
+                          responseResult { succeeded, message }
+                      }}
+                  }""",
+                  {"id": page_id, "content": content},
+              )
+              resp = result["data"]["pages"]["update"]["responseResult"]
+          else:
+              print(f"Creating new page at /{page_path}...")
+              result = graphql(
+                  """mutation ($content: String!, $path: String!, $title: String!) {
+                      pages { create(
+                          content: $content, description: "", editor: "markdown",
+                          isPublished: true, isPrivate: false, locale: "en",
+                          path: $path, tags: [], title: $title
+                      ) {
+                          responseResult { succeeded, message }
+                          page { id }
+                      }}
+                  }""",
+                  {"content": content, "path": page_path, "title": title},
+              )
+              resp = result["data"]["pages"]["create"]["responseResult"]
 
-          if [ "$SUCCEEDED" != "true" ]; then
-            echo "::error::Wiki.js returned: ${MESSAGE}"
-            exit 1
-          fi
-
-          rm -f /tmp/wikijs_lookup.json /tmp/wikijs_payload.json
+          print(f"{resp['succeeded']}: {resp['message']}")
+          if not resp["succeeded"]:
+              print(f"::error::Wiki.js returned: {resp['message']}")
+              sys.exit(1)
+          PYEOF
