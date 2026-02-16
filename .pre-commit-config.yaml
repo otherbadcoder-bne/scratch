@@ -34,6 +34,16 @@ repos:
         files: \.tf$
         pass_filenames: false
 
+  # IAM policy validation via Access Analyzer (requires AWS credentials)
+  - repo: local
+    hooks:
+      - id: iam_policy_validator
+        name: iam policy validator
+        entry: bash -c 'for dir in $(find . -name "*.tf" -path "*/scripts" -prune -o -name "*.tf" -exec dirname {} \; | sort -u); do if [ -f "$dir/scripts/validate-iam-local.sh" ]; then "$dir/scripts/validate-iam-local.sh" "$dir"; fi; done'
+        language: system
+        files: \.tf$
+        pass_filenames: false
+
   # General file hygiene (runs after generators so it cleans up their output)
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
