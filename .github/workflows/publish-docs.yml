@@ -30,7 +30,7 @@ jobs:
               "Authorization": f"Bearer {os.environ['WIKIJS_API_KEY']}",
               "Content-Type": "application/json",
           }
-          page_path = "projects/wiki-js"
+          page_path = "GitHub-Projects/wiki-js"
           title = "Wiki.js on AWS"
 
           def graphql(query, variables=None):
