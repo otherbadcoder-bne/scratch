@@ -22,34 +22,51 @@ jobs:
           WIKIJS_URL: ${{ secrets.WIKIJS_URL }}
           WIKIJS_API_KEY: ${{ secrets.WIKIJS_API_KEY }}
         run: |
+          set -euo pipefail
+
           PAGE_PATH="wiki-js"
           TITLE="Wiki.js on AWS"
           CONTENT=$(jq -Rs . < wiki.js/README.md)
 
-          # Check if the page already exists
-          RESPONSE=$(curl -sf "${WIKIJS_URL}/graphql" \
-            -H "Authorization: Bearer ${WIKIJS_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d "{\"query\": \"{ pages { singleByPath(path: \\\"${PAGE_PATH}\\\", locale: \\\"en\\\") { id } } }\"}")
+          # Helper to call Wiki.js GraphQL API
+          wikijs_query() {
+            local response http_code body
+            response=$(curl -s -w "\n%{http_code}" "${WIKIJS_URL}/graphql" \
+              -H "Authorization: Bearer ${WIKIJS_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d "$1")
+            http_code=$(echo "$response" | tail -1)
+            body=$(echo "$response" | sed '$d')
 
+            if [ "$http_code" -lt 200 ] || [ "$http_code" -ge 300 ]; then
+              echo "::error::Wiki.js API returned HTTP ${http_code}: ${body}"
+              exit 1
+            fi
+            echo "$body"
+          }
+
+          # Check if the page already exists
+          echo "Checking for existing page at /${PAGE_PATH}..."
+          RESPONSE=$(wikijs_query "{\"query\": \"{ pages { singleByPath(path: \\\"${PAGE_PATH}\\\", locale: \\\"en\\\") { id } } }\"}")
           PAGE_ID=$(echo "$RESPONSE" | jq -r '.data.pages.singleByPath.id // empty')
 
           if [ -n "$PAGE_ID" ] && [ "$PAGE_ID" != "null" ]; then
             echo "Updating existing page (ID: ${PAGE_ID})..."
-            curl -sf "${WIKIJS_URL}/graphql" \
-              -H "Authorization: Bearer ${WIKIJS_API_KEY}" \
-              -H "Content-Type: application/json" \
-              -d "{
-                \"query\": \"mutation (\$id: Int!, \$content: String!) { pages { update(id: \$id, content: \$content, isPublished: true) { responseResult { succeeded message } } } }\",
-                \"variables\": { \"id\": ${PAGE_ID}, \"content\": ${CONTENT} }
-              }" | jq -r '.data.pages.update.responseResult.message'
+            PAYLOAD=$(jq -n \
+              --arg query 'mutation ($id: Int!, $content: String!) { pages { update(id: $id, content: $content, isPublished: true) { responseResult { succeeded message } } } }' \
+              --argjson id "$PAGE_ID" \
+              --arg content "$(cat wiki.js/README.md)" \
+              '{ query: $query, variables: { id: $id, content: $content } }')
+            RESULT=$(wikijs_query "$PAYLOAD")
+            echo "$RESULT" | jq -r '.data.pages.update.responseResult.message'
           else
             echo "Creating new page at /${PAGE_PATH}..."
-            curl -sf "${WIKIJS_URL}/graphql" \
-              -H "Authorization: Bearer ${WIKIJS_API_KEY}" \
-              -H "Content-Type: application/json" \
-              -d "{
-                \"query\": \"mutation (\$content: String!, \$path: String!, \$title: String!) { pages { create(content: \$content, path: \$path, title: \$title, locale: \\\"en\\\", isPublished: true, isPrivate: false, editor: \\\"markdown\\\", tags: []) { responseResult { succeeded message } page { id } } } }\",
-                \"variables\": { \"content\": ${CONTENT}, \"path\": \"${PAGE_PATH}\", \"title\": \"${TITLE}\" }
-              }" | jq -r '.data.pages.create.responseResult.message'
+            PAYLOAD=$(jq -n \
+              --arg query 'mutation ($content: String!, $path: String!, $title: String!) { pages { create(content: $content, path: $path, title: $title, locale: "en", isPublished: true, isPrivate: false, editor: "markdown", tags: []) { responseResult { succeeded message } page { id } } } }' \
+              --arg content "$(cat wiki.js/README.md)" \
+              --arg path "$PAGE_PATH" \
+              --arg title "$TITLE" \
+              '{ query: $query, variables: { content: $content, path: $path, title: $title } }')
+            RESULT=$(wikijs_query "$PAYLOAD")
+            echo "$RESULT" | jq -r '.data.pages.create.responseResult.message'
           fi
