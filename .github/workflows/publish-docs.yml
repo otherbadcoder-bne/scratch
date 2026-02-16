@@ -27,13 +27,14 @@ jobs:
           PAGE_PATH="wiki-js"
           TITLE="Wiki.js on AWS"
 
-          # Helper to call Wiki.js GraphQL API
+          # Helper to call Wiki.js GraphQL API using a temp file for the payload
           wikijs_query() {
+            local payload_file="$1"
             local response http_code body
             response=$(curl -s -w "\n%{http_code}" "${WIKIJS_URL}/graphql" \
               -H "Authorization: Bearer ${WIKIJS_API_KEY}" \
               -H "Content-Type: application/json" \
-              -d "$1")
+              --data-binary "@${payload_file}")
             http_code=$(echo "$response" | tail -1)
             body=$(echo "$response" | sed '$d')
 
@@ -44,32 +45,53 @@ jobs:
             echo "$body"
           }
 
-          # Check if the page already exists
+          # Search for existing page by path (avoids singleByPath error on missing pages)
           echo "Checking for existing page at /${PAGE_PATH}..."
-          RESPONSE=$(wikijs_query "{\"query\": \"{ pages { singleByPath(path: \\\"${PAGE_PATH}\\\", locale: \\\"en\\\") { id } } }\"}")
-          echo "Lookup response: ${RESPONSE}"
-          PAGE_ID=$(echo "$RESPONSE" | jq -r '.data.pages.singleByPath.id // empty')
+          jq -n --arg path "$PAGE_PATH" '{
+            query: "{ pages { search(query: \"\", locale: \"en\") { results { path, id } } } }"
+          }' > /tmp/wikijs_lookup.json
+
+          # Use list instead — search for the exact path
+          jq -n '{
+            query: "{ pages { list(orderBy: TITLE) { id, path } } }"
+          }' > /tmp/wikijs_lookup.json
+          RESPONSE=$(wikijs_query /tmp/wikijs_lookup.json)
+          echo "Lookup response received"
+          PAGE_ID=$(echo "$RESPONSE" | jq -r --arg path "$PAGE_PATH" '.data.pages.list[] | select(.path == $path) | .id // empty')
           echo "Page ID: '${PAGE_ID}'"
 
-          if [ -n "$PAGE_ID" ] && [ "$PAGE_ID" != "null" ]; then
+          # Build the payload using jq to handle all escaping
+          if [ -n "$PAGE_ID" ]; then
             echo "Updating existing page (ID: ${PAGE_ID})..."
-            PAYLOAD=$(jq -n \
-              --arg query 'mutation ($id: Int!, $content: String!) { pages { update(id: $id, content: $content, isPublished: true) { responseResult { succeeded message } } } }' \
-              --argjson id "$PAGE_ID" \
+            jq -n \
               --arg content "$(cat wiki.js/README.md)" \
-              '{ query: $query, variables: { id: $id, content: $content } }')
-            RESULT=$(wikijs_query "$PAYLOAD")
-            echo "Update response: ${RESULT}"
-            echo "$RESULT" | jq -r '.data.pages.update.responseResult | "\(.succeeded): \(.message)"'
+              --argjson id "$PAGE_ID" \
+              '{
+                query: "mutation ($id: Int!, $content: String!) { pages { update(id: $id, content: $content, isPublished: true) { responseResult { succeeded message } } } }",
+                variables: { id: $id, content: $content }
+              }' > /tmp/wikijs_payload.json
+            RESULT=$(wikijs_query /tmp/wikijs_payload.json)
+            echo "Response: ${RESULT}"
+            SUCCEEDED=$(echo "$RESULT" | jq -r '.data.pages.update.responseResult.succeeded')
+            MESSAGE=$(echo "$RESULT" | jq -r '.data.pages.update.responseResult.message')
+            echo "${SUCCEEDED}: ${MESSAGE}"
+            [ "$SUCCEEDED" = "true" ] || exit 1
           else
             echo "Creating new page at /${PAGE_PATH}..."
-            PAYLOAD=$(jq -n \
-              --arg query 'mutation ($content: String!, $path: String!, $title: String!) { pages { create(content: $content, path: $path, title: $title, locale: "en", isPublished: true, isPrivate: false, editor: "markdown", tags: []) { responseResult { succeeded message } page { id } } } }' \
+            jq -n \
               --arg content "$(cat wiki.js/README.md)" \
               --arg path "$PAGE_PATH" \
               --arg title "$TITLE" \
-              '{ query: $query, variables: { content: $content, path: $path, title: $title } }')
-            RESULT=$(wikijs_query "$PAYLOAD")
-            echo "Create response: ${RESULT}"
-            echo "$RESULT" | jq -r '.data.pages.create.responseResult | "\(.succeeded): \(.message)"'
+              '{
+                query: "mutation ($content: String!, $path: String!, $title: String!) { pages { create(content: $content, path: $path, title: $title, locale: \"en\", isPublished: true, isPrivate: false, editor: \"markdown\", tags: []) { responseResult { succeeded message } page { id } } } }",
+                variables: { content: $content, path: $path, title: $title }
+              }' > /tmp/wikijs_payload.json
+            RESULT=$(wikijs_query /tmp/wikijs_payload.json)
+            echo "Response: ${RESULT}"
+            SUCCEEDED=$(echo "$RESULT" | jq -r '.data.pages.create.responseResult.succeeded')
+            MESSAGE=$(echo "$RESULT" | jq -r '.data.pages.create.responseResult.message')
+            echo "${SUCCEEDED}: ${MESSAGE}"
+            [ "$SUCCEEDED" = "true" ] || exit 1
           fi
+
+          rm -f /tmp/wikijs_lookup.json /tmp/wikijs_payload.json
