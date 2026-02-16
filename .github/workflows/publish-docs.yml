@@ -26,7 +26,6 @@ jobs:
 
           PAGE_PATH="wiki-js"
           TITLE="Wiki.js on AWS"
-          CONTENT=$(jq -Rs . < wiki.js/README.md)
 
           # Helper to call Wiki.js GraphQL API
           wikijs_query() {
@@ -48,7 +47,9 @@ jobs:
           # Check if the page already exists
           echo "Checking for existing page at /${PAGE_PATH}..."
           RESPONSE=$(wikijs_query "{\"query\": \"{ pages { singleByPath(path: \\\"${PAGE_PATH}\\\", locale: \\\"en\\\") { id } } }\"}")
+          echo "Lookup response: ${RESPONSE}"
           PAGE_ID=$(echo "$RESPONSE" | jq -r '.data.pages.singleByPath.id // empty')
+          echo "Page ID: '${PAGE_ID}'"
 
           if [ -n "$PAGE_ID" ] && [ "$PAGE_ID" != "null" ]; then
             echo "Updating existing page (ID: ${PAGE_ID})..."
@@ -58,7 +59,8 @@ jobs:
               --arg content "$(cat wiki.js/README.md)" \
               '{ query: $query, variables: { id: $id, content: $content } }')
             RESULT=$(wikijs_query "$PAYLOAD")
-            echo "$RESULT" | jq -r '.data.pages.update.responseResult.message'
+            echo "Update response: ${RESULT}"
+            echo "$RESULT" | jq -r '.data.pages.update.responseResult | "\(.succeeded): \(.message)"'
           else
             echo "Creating new page at /${PAGE_PATH}..."
             PAYLOAD=$(jq -n \
@@ -68,5 +70,6 @@ jobs:
               --arg title "$TITLE" \
               '{ query: $query, variables: { content: $content, path: $path, title: $title } }')
             RESULT=$(wikijs_query "$PAYLOAD")
-            echo "$RESULT" | jq -r '.data.pages.create.responseResult.message'
+            echo "Create response: ${RESULT}"
+            echo "$RESULT" | jq -r '.data.pages.create.responseResult | "\(.succeeded): \(.message)"'
           fi
