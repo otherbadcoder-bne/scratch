@@ -30,7 +30,7 @@ jobs:
               "Authorization": f"Bearer {os.environ['WIKIJS_API_KEY']}",
               "Content-Type": "application/json",
           }
-          page_path = "wiki-js"
+          page_path = "projects/wiki-js"
           title = "Wiki.js on AWS"
 
           def graphql(query, variables=None):
@@ -56,12 +56,12 @@ jobs:
               page_id = existing["id"]
               print(f"Updating existing page (ID: {page_id})...")
               result = graphql(
-                  """mutation ($id: Int!, $content: String!) {
-                      pages { update(id: $id, content: $content, isPublished: true) {
+                  """mutation ($id: Int!, $content: String!, $tags: [String]!) {
+                      pages { update(id: $id, content: $content, isPublished: true, tags: $tags) {
                           responseResult { succeeded, message }
                       }}
                   }""",
-                  {"id": page_id, "content": content},
+                  {"id": page_id, "content": content, "tags": []},
               )
               resp = result["data"]["pages"]["update"]["responseResult"]
           else:
