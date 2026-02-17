@@ -50,7 +50,8 @@ jobs:
           pages = result.get("data", {}).get("pages", {}).get("list", [])
           existing = next((p for p in pages if p["path"] == page_path), None)
 
-          content = open("wiki.js/README.md").read()
+          repo_url = "https://github.com/${{ github.repository }}"
+          content = f"> **Source:** [{title}]({repo_url})\n\n" + open("wiki.js/README.md").read()
 
           if existing:
               page_id = existing["id"]
