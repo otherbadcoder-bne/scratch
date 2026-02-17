@@ -1,6 +1,5 @@
 variables {
-  domain_name  = "wiki.test.example.com"
-  access_token = "test-token"
+  domain_name = "wiki.test.example.com"
 }
 
 run "cloudfront_redirects_to_https" {

@@ -15,11 +15,6 @@ variable "instance_type" {
   default     = "t3.micro"
 }
 
-variable "access_token" {
-  description = "Secret path prefix required to access Wiki.js (e.g. 'mysecret123')"
-  type        = string
-  sensitive   = true
-}
 
 variable "environment" {
   description = "Environment name used for tagging"

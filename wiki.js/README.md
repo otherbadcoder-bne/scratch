@@ -6,10 +6,7 @@ Terraform project to deploy Wiki.js on AWS with CloudFront, EC2, and SSM access.
 
 ```mermaid
 graph LR
-    User((User)) -->|HTTPS + secret prefix| CF[CloudFront]
-    CF -->|viewer-request| Fn[CloudFront Function: Access Gate]
-    Fn -->|valid token: set cookie| CF
-    Fn -->|no token: 403| User
+    User((User)) -->|HTTPS| CF[CloudFront]
     CF -->|HTTP :3000| EC2[EC2: Wiki.js + PostgreSQL]
     EC2 --- SG[Security Group: CloudFront only]
     EC2 -.-> SSM[SSM Session Manager]
@@ -27,7 +24,6 @@ graph LR
 - **VPC** — Shared services VPC with public/private subnets across 3 AZs
 - **EC2** — Amazon Linux 2023 running Wiki.js + PostgreSQL via Docker Compose
 - **CloudFront** — TLS termination, no need to manage IP-based security groups
-- **CloudFront Function** — Access gate that requires a secret path prefix ("knock") to reach Wiki.js; all other requests receive a generic 403
 - **ACM** — DNS-validated certificate (created in us-east-1 for CloudFront)
 - **SSM** — Session Manager for shell access (no SSH keys or port 22)
 
@@ -77,16 +73,13 @@ Project: main
     ├─ HTTP requests                                  Monthly cost depends on usage: $0.0075 per 10k requests
     └─ HTTPS requests                                 Monthly cost depends on usage: $0.01 per 10k requests
 
- aws_cloudfront_function.access_gate
- └─ Total number of invocations                       Monthly cost depends on usage: $0.10 per 1M invocations
-
  OVERALL TOTAL                                                                                        $11.56
 
 *Usage costs can be estimated by updating Infracost Cloud settings, see docs for other options.
 
 ──────────────────────────────────
-36 cloud resources were detected:
-∙ 3 were estimated
+35 cloud resources were detected:
+∙ 2 were estimated
 ∙ 33 were free
 
 ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━┳━━━━━━━━━━━━┓
@@ -126,11 +119,7 @@ This assists in making sure a high level of security is maintained.
 
 ### No WAF
 
-Both Trivy and Checkov flag the absence of AWS WAF on the CloudFront distribution. AWS WAF adds a minimum of ~$6-10/month (WebACL + rule groups), which nearly doubles the baseline infrastructure cost (~$12/month). For a small internal wiki behind Google OAuth and the CloudFront Function access gate, the cost-benefit does not justify it. This will be reconsidered if the wiki becomes more widely used or handles sensitive data.
-
-### Access Gate
-
-The CloudFront Function acts as a lightweight "knock" layer. Users must know a secret path prefix to reach the site — without it, CloudFront returns a generic 403 with no indication a wiki exists behind it. On first valid request the function sets a `Secure; HttpOnly; SameSite=Strict` session cookie so that subsequent requests (assets, API calls, etc.) pass through without the prefix.
+Both Trivy and Checkov flag the absence of AWS WAF on the CloudFront distribution. AWS WAF adds a minimum of ~$6-10/month (WebACL + rule groups), which nearly doubles the baseline infrastructure cost (~$12/month). For a small internal wiki behind Google OAuth, the cost-benefit does not justify it. This will be reconsidered if the wiki becomes more widely used or handles sensitive data.
 
 ## Terraform Docs
 
@@ -160,7 +149,6 @@ No modules.
 | [aws_acm_certificate.wiki](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/acm_certificate) | resource |
 | [aws_acm_certificate_validation.wiki](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/acm_certificate_validation) | resource |
 | [aws_cloudfront_distribution.wiki](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudfront_distribution) | resource |
-| [aws_cloudfront_function.access_gate](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudfront_function) | resource |
 | [aws_cloudfront_response_headers_policy.security](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/cloudfront_response_headers_policy) | resource |
 | [aws_default_network_acl.default](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/default_network_acl) | resource |
 | [aws_default_security_group.default](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/default_security_group) | resource |
@@ -196,7 +184,6 @@ No modules.
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
-| <a name="input_access_token"></a> [access\_token](#input\_access\_token) | Secret path prefix required to access Wiki.js (e.g. 'mysecret123') | `string` | n/a | yes |
 | <a name="input_domain_name"></a> [domain\_name](#input\_domain\_name) | Domain name for the Wiki.js site (e.g. wiki.example.com) | `string` | n/a | yes |
 | <a name="input_environment"></a> [environment](#input\_environment) | Environment name used for tagging | `string` | `"shared-services"` | no |
 | <a name="input_instance_type"></a> [instance\_type](#input\_instance\_type) | EC2 instance type for the Wiki.js server | `string` | `"t3.micro"` | no |

@@ -16,10 +16,9 @@ SKIPPED=0
 
 # Extract identity policies (aws_iam_role_policy, aws_iam_policy)
 # from the plan JSON and validate each one.
-for row in $(jq -c '.resource_changes[] | select((.type == "aws_iam_role_policy" or .type == "aws_iam_policy") and .change.actions != ["delete"])' "$PLAN_JSON" | base64); do
-  decoded=$(echo "$row" | base64 -d)
-  address=$(echo "$decoded" | jq -r '.address')
-  policy=$(echo "$decoded" | jq -r '.change.after.policy // empty')
+while IFS= read -r row; do
+  address=$(echo "$row" | jq -r '.address')
+  policy=$(echo "$row" | jq -r '.change.after.policy // empty')
 
   if [[ -z "$policy" ]]; then
     echo "SKIP $address — policy contains unresolved values (unknown at plan time)"
@@ -46,7 +45,7 @@ for row in $(jq -c '.resource_changes[] | select((.type == "aws_iam_role_policy"
   if echo "$findings" | jq -e '.findings[] | select(.findingType == "ERROR" or .findingType == "SECURITY_WARNING")' > /dev/null 2>&1; then
     ERRORS=$((ERRORS + 1))
   fi
-done
+done < <(jq -c '.resource_changes[] | select((.type == "aws_iam_role_policy" or .type == "aws_iam_policy") and .change.actions != ["delete"])' "$PLAN_JSON")
 
 echo ""
 echo "Checked: $CHECKED  Skipped: $SKIPPED  Failed: $ERRORS"

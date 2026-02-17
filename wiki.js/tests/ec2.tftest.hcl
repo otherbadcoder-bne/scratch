@@ -1,6 +1,5 @@
 variables {
   domain_name      = "wiki.test.example.com"
-  access_token     = "test-token"
   schedule_enabled = true
 }
 
