@@ -14,7 +14,6 @@ trap 'rm -f "$PLAN_FILE" "$PLAN_JSON"' EXIT
 
 terraform -chdir="$DIR" plan \
   -var="domain_name=placeholder.example.com" \
-  -var="access_token=placeholder" \
   -input=false \
   -out="$PLAN_FILE" \
   > /dev/null 2>&1
