@@ -82,13 +82,22 @@ jobs:
         if: steps.freshness.outputs.generate == 'true'
         run: npm install -g @google/gemini-cli
 
-      - name: Generate docs
+      - name: Test Gemini auth and model
         if: steps.freshness.outputs.generate == 'true'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           mkdir -p ~/.gemini
           echo '{"security":{"auth":{"selectedType":"gemini-api-key"}}}' > ~/.gemini/settings.json
+          echo "Testing Gemini API key + model..."
+          gemini -m gemini-2.5-flash -p "Say OK" 2>&1
+
+      - name: Generate docs
+        if: steps.freshness.outputs.generate == 'true'
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          # ~/.gemini/settings.json already written by the test step above
           bash scripts/generate-docs.sh all
 
       - name: Commit generated docs
