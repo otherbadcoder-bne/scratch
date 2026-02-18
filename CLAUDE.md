@@ -27,11 +27,11 @@ Runs at **push time** (agentic):
 
 ## AI review script (scripts/ai-review.sh)
 
-When invoked non-interactively as part of the pre-push hook, the script dynamically
-discovers context (tech stack, this file, AGENTS.md, pre-commit hooks) and builds the
-prompt at runtime — no hardcoded project knowledge in the script itself.
+The pre-push hook uses Gemini CLI (not Claude Code) for the automated review. The script
+dynamically discovers context (tech stack, this file, AGENTS.md, pre-commit hooks) and
+builds the prompt at runtime — no hardcoded project knowledge in the script itself.
 
-When you receive that prompt:
+If you are manually reviewing this codebase via Claude Code:
 - Focus only on what static tools cannot catch (intent, logic, architecture, operational gaps)
 - Do not re-flag issues the listed pre-commit hooks already cover
-- Use the `BLOCK:` / `[BLOCK]` / `[WARN]` / `[INFO]` format specified in the prompt
+- Use the `BLOCK:` / `[BLOCK]` / `[WARN]` / `[INFO]` format if asked to review a diff

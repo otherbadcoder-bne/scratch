@@ -74,7 +74,7 @@ pre-commit run --all-files
 
 | Hook | Purpose |
 |---|---|
-| `ai-review` | Agentic review via `claude --print` — reasons about intent, security logic, and architectural drift beyond what static tools catch. Blocks push on serious findings. Requires `claude` CLI. Override with `git push --no-verify`. |
+| `ai-review` | Agentic review via Gemini CLI — reasons about intent, security logic, and architectural drift beyond what static tools catch. Blocks push on serious findings. Requires `gemini` CLI (see [google-gemini/gemini-cli](https://github.com/google-gemini/gemini-cli)). Override with `git push --no-verify`. |
 
 ## GitHub Actions
 

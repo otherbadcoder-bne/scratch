@@ -37,7 +37,7 @@ Defined in `.pre-commit-config.yaml` at the repo root.
 5. **Checkov** — policy-as-code (skips configured in each project's `.checkov.yml`)
 
 **At push time** (agentic, requires one-time setup: `pre-commit install --hook-type pre-push`):
-6. **AI review** (`scripts/ai-review.sh`) — calls `claude --print` with the branch diff and commit log.
+6. **AI review** (`scripts/ai-review.sh`) — calls Gemini CLI with the branch diff and commit log.
    Focuses on what static tools cannot catch: intent vs implementation, IAM logic flaws, architectural drift,
    operational gaps, and cost surprises. Blocks the push if it responds with a `BLOCK:` line.
    Override with `git push --no-verify` if needed.

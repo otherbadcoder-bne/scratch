@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# ai-review.sh — universal agentic pre-push review via Claude Code
+# ai-review.sh — universal agentic pre-push review via Gemini CLI
 #
 # Dynamically discovers project context at runtime (tech stack, existing docs,
 # active pre-commit hooks). No hardcoded project knowledge — drop into any repo.
@@ -16,9 +16,9 @@ bold()  { printf '\033[1m%s\033[0m\n' "$*"; }
 warn()  { printf '\033[33m⚠  %s\033[0m\n' "$*" >&2; }
 info()  { printf '\033[36m   %s\033[0m\n' "$*"; }
 
-# ── guard: claude must be available ──────────────────────────────────────────
-if ! command -v claude &>/dev/null; then
-  warn "claude CLI not found — skipping AI review (install: npm i -g @anthropic-ai/claude-code)"
+# ── guard: gemini must be available ──────────────────────────────────────────
+if ! command -v gemini &>/dev/null; then
+  warn "gemini CLI not found — skipping AI review (install: https://github.com/google-gemini/gemini-cli)"
   exit 0
 fi
 
@@ -179,20 +179,20 @@ ${DIFF}
 PROMPT
 )
 
-# ── call claude ───────────────────────────────────────────────────────────────
+# ── call gemini ───────────────────────────────────────────────────────────────
 bold ""
-bold "=== AI Review (claude) ==="
+bold "=== AI Review (Gemini CLI) ==="
 info "Repo: ${REPO_NAME} | Stack: ${STACK} | Branch: ${CURRENT_BRANCH} vs ${BASE_BRANCH} | ${DIFF_LINES} lines"
 echo ""
 
-RESULT=$(printf '%s' "$PROMPT" | claude --print 2>/dev/null) || {
-  warn "claude returned non-zero — skipping AI review (push continues)"
+RESULT=$(printf '%s' "$PROMPT" | gemini 2>/dev/null) || {
+  warn "gemini returned non-zero — skipping AI review (push continues)"
   exit 0
 }
 
 echo "$RESULT"
 echo ""
-bold "=========================="
+bold "=============================="
 echo ""
 
 # ── gate ──────────────────────────────────────────────────────────────────────
