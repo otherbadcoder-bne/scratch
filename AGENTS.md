@@ -27,12 +27,20 @@ Key files: `main.tf`, `vpc.tf`, `ec2.tf`, `cloudfront.tf`, `acm.tf`, `variables.
 - GitHub Actions CI runs on PRs to `main`
 
 ### Pre-commit hooks
-Defined in `.pre-commit-config.yaml` at the repo root. Hooks run in this order:
+Defined in `.pre-commit-config.yaml` at the repo root.
+
+**At commit time** (fast, deterministic):
 1. **Terraform** — fmt, validate, tflint, terraform-docs, trivy
 2. **Infracost** — cost breakdown injected into project README between `<!-- BEGIN_INFRACOST -->` / `<!-- END_INFRACOST -->` markers
 3. **File hygiene** — trailing whitespace, end-of-file fixer, YAML/JSON checks, merge conflict detection, private key detection
 4. **Gitleaks** — secret scanning
 5. **Checkov** — policy-as-code (skips configured in each project's `.checkov.yml`)
+
+**At push time** (agentic, requires one-time setup: `pre-commit install --hook-type pre-push`):
+6. **AI review** (`scripts/ai-review.sh`) — calls `claude --print` with the branch diff and commit log.
+   Focuses on what static tools cannot catch: intent vs implementation, IAM logic flaws, architectural drift,
+   operational gaps, and cost surprises. Blocks the push if it responds with a `BLOCK:` line.
+   Override with `git push --no-verify` if needed.
 
 Hook ordering matters — generators (terraform-docs, infracost) run before file hygiene so whitespace gets cleaned in the same pass.
 

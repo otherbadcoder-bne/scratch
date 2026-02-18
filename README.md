@@ -40,8 +40,11 @@ pip install checkov
 ### 3. Activate the hooks
 
 ```bash
-pre-commit install
+pre-commit install                        # commit-time hooks
+pre-commit install --hook-type pre-push   # pre-push AI review hook
 ```
+
+Both commands are required. `pre-commit install` alone will not wire up the pre-push hook.
 
 ### 4. (Optional) Run against all files
 
@@ -50,6 +53,8 @@ pre-commit run --all-files
 ```
 
 ### Hooks included
+
+**Commit-time** (run on every `git commit`):
 
 | Hook | Purpose |
 |---|---|
@@ -64,6 +69,12 @@ pre-commit run --all-files
 | `infracost` | Cost estimation for infrastructure changes |
 | `detect-private-key` | Blocks commits containing private keys |
 | `no-commit-to-branch` | Prevents direct commits to main |
+
+**Pre-push** (run on every `git push`, requires `pre-commit install --hook-type pre-push`):
+
+| Hook | Purpose |
+|---|---|
+| `ai-review` | Agentic review via `claude --print` — reasons about intent, security logic, and architectural drift beyond what static tools catch. Blocks push on serious findings. Requires `claude` CLI. Override with `git push --no-verify`. |
 
 ## GitHub Actions
 

@@ -39,7 +39,7 @@ repos:
     hooks:
       - id: iam_policy_validator
         name: iam policy validator
-        entry: bash -c 'for dir in $(find . -name "*.tf" -path "*/scripts" -prune -o -name "*.tf" -exec dirname {} \; | sort -u); do if [ -f "$dir/scripts/validate-iam-local.sh" ]; then "$dir/scripts/validate-iam-local.sh" "$dir"; fi; done'
+        entry: scripts/validate-iam-policies.sh
         language: system
         files: \.tf$
         pass_filenames: false
@@ -72,3 +72,17 @@ repos:
         language: system
         files: \.tf$
         pass_filenames: false
+
+  # Agentic pre-push review — runs claude --print with the branch diff.
+  # Blocks push if Claude responds with a BLOCK: line.
+  # Requires: pre-commit install --hook-type pre-push (one-time setup)
+  # Override:  git push --no-verify
+  - repo: local
+    hooks:
+      - id: ai-review
+        name: AI review (claude)
+        entry: scripts/ai-review.sh
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true
