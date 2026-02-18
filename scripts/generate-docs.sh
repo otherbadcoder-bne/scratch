@@ -112,7 +112,7 @@ REPO_NAME=$(basename "${REPO_ROOT}")
 # Exits the whole script with a clear message and reset time if quota is hit.
 gemini_preflight() {
   local out
-  out=$(gemini -m gemini-2.5-flash -p "Say OK" 2>&1) || {
+  out=$(gemini -m gemini-2.5-flash --approval-mode plan -p "Say OK" 2>&1) || {
     if printf '%s' "$out" | grep -qi "exhausted\|quota\|capacity"; then
       local reset
       reset=$(printf '%s' "$out" | grep -oE 'reset after [0-9hm ]+s' | head -1 || true)
@@ -133,7 +133,7 @@ call_gemini() {
   perl -e "
     alarm(${TIMEOUT});
     open(STDIN, '<', \$ARGV[0]) or die \"cannot open: \$!\";
-    exec('gemini', '-m', 'gemini-2.5-flash', '-p', '');
+    exec('gemini', '-m', 'gemini-2.5-flash', '--approval-mode', 'plan', '-p', '');
   " -- "${prompt_file}" 2>"${err_file}" || {
     local err
     err=$(cat "${err_file}")
@@ -306,25 +306,39 @@ case "${TARGET}" in
   performance)   doc_performance   || FAILED=$((FAILED + 1)) ;;
   ai-plan)       doc_ai_plan       || FAILED=$((FAILED + 1)) ;;
   all)
-    # Preflight before spawning 8 parallel jobs — bail immediately on quota error.
     gemini_preflight
-    # Run all 8 docs in parallel; capture output per-doc then print in order.
-    PARALLEL_OUTDIR=$(mktemp -d)
 
-    doc_architecture > "${PARALLEL_OUTDIR}/1.out" 2>&1 & PIDS=($!)
-    doc_features     > "${PARALLEL_OUTDIR}/2.out" 2>&1 & PIDS+=($!)
-    doc_developer    > "${PARALLEL_OUTDIR}/3.out" 2>&1 & PIDS+=($!)
-    doc_support      > "${PARALLEL_OUTDIR}/4.out" 2>&1 & PIDS+=($!)
-    doc_testing      > "${PARALLEL_OUTDIR}/5.out" 2>&1 & PIDS+=($!)
-    doc_bugs         > "${PARALLEL_OUTDIR}/6.out" 2>&1 & PIDS+=($!)
-    doc_performance  > "${PARALLEL_OUTDIR}/7.out" 2>&1 & PIDS+=($!)
-    doc_ai_plan      > "${PARALLEL_OUTDIR}/8.out" 2>&1 & PIDS+=($!)
+    if [[ "${CI:-false}" == "true" ]]; then
+      # In CI, run sequentially to stay within free-tier rate limits (10 RPM).
+      # Parallel mode fires 8 simultaneous requests and exhausts the per-minute quota.
+      info "CI detected — running docs sequentially (rate-limit safe)"
+      doc_architecture  || FAILED=$((FAILED + 1))
+      doc_features      || FAILED=$((FAILED + 1))
+      doc_developer     || FAILED=$((FAILED + 1))
+      doc_support       || FAILED=$((FAILED + 1))
+      doc_testing       || FAILED=$((FAILED + 1))
+      doc_bugs          || FAILED=$((FAILED + 1))
+      doc_performance   || FAILED=$((FAILED + 1))
+      doc_ai_plan       || FAILED=$((FAILED + 1))
+    else
+      # Locally, run all 8 docs in parallel; capture output per-doc then print in order.
+      PARALLEL_OUTDIR=$(mktemp -d)
 
-    for i in "${!PIDS[@]}"; do
-      wait "${PIDS[$i]}" || FAILED=$((FAILED + 1))
-      cat "${PARALLEL_OUTDIR}/$((i + 1)).out"
-    done
-    rm -rf "${PARALLEL_OUTDIR}"
+      doc_architecture > "${PARALLEL_OUTDIR}/1.out" 2>&1 & PIDS=($!)
+      doc_features     > "${PARALLEL_OUTDIR}/2.out" 2>&1 & PIDS+=($!)
+      doc_developer    > "${PARALLEL_OUTDIR}/3.out" 2>&1 & PIDS+=($!)
+      doc_support      > "${PARALLEL_OUTDIR}/4.out" 2>&1 & PIDS+=($!)
+      doc_testing      > "${PARALLEL_OUTDIR}/5.out" 2>&1 & PIDS+=($!)
+      doc_bugs         > "${PARALLEL_OUTDIR}/6.out" 2>&1 & PIDS+=($!)
+      doc_performance  > "${PARALLEL_OUTDIR}/7.out" 2>&1 & PIDS+=($!)
+      doc_ai_plan      > "${PARALLEL_OUTDIR}/8.out" 2>&1 & PIDS+=($!)
+
+      for i in "${!PIDS[@]}"; do
+        wait "${PIDS[$i]}" || FAILED=$((FAILED + 1))
+        cat "${PARALLEL_OUTDIR}/$((i + 1)).out"
+      done
+      rm -rf "${PARALLEL_OUTDIR}"
+    fi
     ;;
   *)
     warn "Unknown doc type: ${TARGET}"
