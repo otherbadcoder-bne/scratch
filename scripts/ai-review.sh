@@ -239,15 +239,4 @@ if echo "$RESULT" | head -1 | grep -q "^BLOCK:"; then
   exit 1
 fi
 
-# ── background doc generation ─────────────────────────────────────────────────
-# Spawn generate-docs.sh after a successful review — non-blocking, auto-commits output.
-# Runs silently in background; check .ai/generate-docs.log if something looks wrong.
-GENDOCS="${REPO_ROOT}/scripts/generate-docs.sh"
-if [[ -x "${GENDOCS}" ]]; then
-  info "Spawning doc generation in background..."
-  nohup bash "${GENDOCS}" all --auto-commit \
-    > "${REPO_ROOT}/.ai/generate-docs.log" 2>&1 &
-  disown
-fi
-
 exit 0

@@ -92,8 +92,13 @@ REPO_NAME=$(basename "${REPO_ROOT}")
 # ── gemini call with timeout ──────────────────────────────────────────────────
 call_gemini() {
   local prompt_file="$1"
-  perl -e "alarm(${TIMEOUT}); exec(@ARGV)" -- \
-    gemini -p "$(cat "${prompt_file}")" 2>/dev/null
+  # Pipe via stdin to avoid shell-expanding special chars (${var}, backticks)
+  # in source file content. -p "" enables headless mode; stdin is the prompt.
+  perl -e "
+    alarm(${TIMEOUT});
+    open(STDIN, '<', \$ARGV[0]) or die \"cannot open: \$!\";
+    exec('gemini', '-p', '');
+  " -- "${prompt_file}" 2>/dev/null
 }
 
 # ── document generator ────────────────────────────────────────────────────────
@@ -106,7 +111,7 @@ generate() {
   local output="${DOCS_DIR}/${slug}.md"
   local prompt_file
   prompt_file=$(mktemp /tmp/gendoc-prompt.XXXXXX)
-  trap 'rm -f "${prompt_file}"' RETURN
+  trap 'rm -f "${prompt_file}"; trap - RETURN' RETURN
 
   cat > "${prompt_file}" << PROMPT
 You are a technical writer generating documentation for a software project.
@@ -275,11 +280,17 @@ if [[ "${AUTO_COMMIT}" == "true" ]]; then
   git -C "${REPO_ROOT}" add "${DOCS_DIR}" 2>/dev/null || true
   if ! git -C "${REPO_ROOT}" diff --cached --quiet 2>/dev/null; then
     git -C "${REPO_ROOT}" commit --no-verify \
-      -m "docs: auto-generate documentation [skip ci]" \
-      2>/dev/null && info "Docs committed automatically" \
-      || warn "Auto-commit failed — docs saved to ${DOCS_DIR}, commit manually"
+      -m "docs: auto-generate documentation [skip ci]"
+    # Push the doc commit now so it's included with this push.
+    # The outer git push will then be a no-op ("Everything up-to-date").
+    REMOTE=$(git -C "${REPO_ROOT}" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null \
+      | cut -d/ -f1)
+    REMOTE="${REMOTE:-origin}"
+    BRANCH=$(git -C "${REPO_ROOT}" branch --show-current)
+    git -C "${REPO_ROOT}" push --no-verify "${REMOTE}" "${BRANCH}"
+    info "Docs committed and pushed."
   else
-    info "Docs unchanged — nothing to commit"
+    info "Docs unchanged — nothing to commit."
   fi
 else
   info "Review files in ${DOCS_DIR} then commit."
