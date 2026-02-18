@@ -1,109 +1,131 @@
-# Terraform Test Strategy: Wiki.js
+## Testing Wiki.js Terraform Deployment
 
-This document outlines the test coverage, environment requirements, and execution strategy for the Wiki.js Terraform project. The tests are designed to validate the configuration of the AWS infrastructure as defined in the Terraform code, ensuring it aligns with architectural and security requirements.
+This document provides an overview of the testing strategy for the `wiki.js` Terraform project, including current coverage, execution instructions, environment requirements, identified gaps, and recommendations for enhancing test confidence. It is intended for QA engineers and developers working with this infrastructure-as-code.
 
-## Overview
+### How to Run Tests
 
-The project utilizes native Terraform tests (`.tftest.hcl`) to assert the expected state of resources from a `terraform plan`. This approach validates resource attributes, connections, and security configurations before any infrastructure is deployed.
+The `wiki.js` project utilizes Terraform native testing, integrated with `pre-commit` hooks for automated execution during development.
 
-Tests are integrated into the pre-commit framework, running automatically upon `git commit`.
+**1. Using Pre-commit Hooks (Recommended for Developers):**
 
-## Test Environment Requirements
+This method ensures tests run automatically before every commit, providing immediate feedback.
 
-To execute the tests, the following are required:
-- **Terraform CLI**: The tests are run using the `terraform test` command.
-- **AWS Credentials**: While the tests run against the plan and do not deploy resources, valid AWS credentials are required for the Terraform provider to initialize and generate the plan.
+   a. **Install Pre-commit:**
+      ```bash
+      brew install pre-commit # macOS
+      pip install pre-commit  # Windows/Linux
+      ```
 
-## How to Run Tests
+   b. **Activate Hooks:**
+      Navigate to the repository root and activate the pre-commit hooks. The `terraform_test` hook is included in the commit-time hooks.
+      ```bash
+      pre-commit install
+      ```
 
-Tests are executed automatically as a `pre-commit` hook. They can also be run manually.
+   c. **Run All Files (Optional):**
+      To manually run all pre-commit hooks against all files in the repository:
+      ```bash
+      pre-commit run --all-files
+      ```
+      This will execute `terraform_test` alongside other linters and security checks.
 
-Navigate to the project directory and run the following command:
-```bash
-cd wiki.js/
-terraform test
-```
+**2. Running Terraform Native Tests Directly:**
 
-## Current Test Coverage
+For granular control or CI/CD environments, Terraform native tests can be run directly.
 
-The test suite is organized into files that correspond to the logical components of the infrastructure: VPC, EC2, and CloudFront.
+   a. **Navigate to the Project Directory:**
+      ```bash
+      cd wiki.js/
+      ```
 
-### `tests/vpc.tftest.hcl`
+   b. **Execute Tests:**
+      ```bash
+      terraform test
+      ```
 
-This file validates the networking foundation of the project.
+### Test Environment Requirements
 
-**Key Validations:**
-- **VPC Configuration**:
-  - Asserts that the VPC has `enable_dns_support` and `enable_dns_hostnames` set to `true`.
-  - Confirms the default VPC CIDR block is `10.0.0.0/16`.
-- **Subnet Structure**:
-  - Verifies that exactly 3 public and 3 private subnets are created.
-  - Ensures `map_public_ip_on_launch` is `true` for public subnets and `false` for private subnets.
-- **Resource Tagging**:
-  - Checks that the VPC and Internet Gateway are tagged with `environment = shared-services`.
+To run the existing Terraform tests, the following tools and configurations are required:
 
-### `tests/ec2.tftest.hcl`
+*   **Terraform CLI**: Version 1.5 or newer.
+*   **Pre-commit Framework**: For automated execution via hooks.
+*   **AWS CLI / Credentials**: Configured with valid AWS credentials and a default region (e.g., `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION` environment variables, or a configured AWS profile). The `terraform_test` hook within `pre-commit` will attempt to provision resources, requiring these credentials.
 
-This file focuses on the EC2 instance, its security posture, and associated IAM roles.
+### Current Test Coverage
 
-**Key Validations:**
-- **Instance Configuration**:
-  - Verifies the default instance type is `t3.micro`.
-  - Confirms the root EBS volume is a 20 GB `gp3` volume.
-- **Security**:
-  - Enforces IMDSv2 by asserting `http_tokens` is set to `required`.
-  - Confirms the `AmazonSSMManagedInstanceCore` policy is attached to the instance's IAM role, enabling SSM Session Manager access.
-  - Asserts that the security group allows inbound TCP traffic on port 3000.
-  - Explicitly asserts that there is **no** ingress rule for port 22 (SSH), enforcing a no-SSH policy.
-- **IAM**:
-  - Validates that the instance's IAM role has a valid assume role policy for the EC2 service.
-- **Scheduler**:
-  - If `schedule_enabled` is true, verifies that AWS Scheduler is configured to stop and start the instance on a weekday schedule (`MON-FRI`).
-  - Asserts the schedules use the `Australia/Brisbane` timezone.
+The `wiki.js` project includes dedicated Terraform test files located in `wiki.js/tests/`. These tests validate specific aspects of the deployed AWS infrastructure.
 
-### `tests/cloudfront.tftest.hcl`
+#### `wiki.js/tests/cloudfront.tftest.hcl`
 
-This file validates the CloudFront distribution, its origin configuration, and security headers.
+*   **Purpose**: Validates the configuration of the AWS CloudFront distribution and the associated ACM certificate.
+*   **Validates**:
+    *   That CloudFront is configured to redirect HTTP requests to HTTPS.
+    *   That the CloudFront distribution allows all seven standard HTTP methods (GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE).
+    *   That the CloudFront distribution uses the provided `domain_name` variable as an alias.
+    *   That the CloudFront origin connects to the EC2 instance on TCP port 3000 using an HTTP-only protocol policy.
+    *   That CloudFront enforces a minimum TLS protocol version of `TLSv1.2_2021`.
+    *   Specific security headers are configured in the response headers policy:
+        *   HTTP Strict Transport Security (HSTS) with a `max-age` of 1 year (31536000 seconds).
+        *   `X-Frame-Options` set to `DENY`.
+    *   The ACM certificate uses DNS validation.
+    *   The ACM certificate's domain name matches the provided `domain_name` variable.
 
-**Key Validations:**
-- **Traffic and TLS**:
-  - Ensures the viewer protocol policy is set to `redirect-to-https`.
-  - Verifies the minimum TLS version is `TLSv1.2_2021`.
-- **Domain and Origin**:
-  - Confirms the distribution uses the correct custom domain name.
-  - Asserts the origin connects to the EC2 instance over `http-only` on port `3000`.
-- **HTTP Methods**:
-  - Asserts that all 7 HTTP methods (`GET`, `HEAD`, `OPTIONS`, `PUT`, `POST`, `PATCH`, `DELETE`) are allowed, which is necessary for Wiki.js functionality.
-- **Security Headers**:
-  - Validates that a response headers policy is attached.
-  - Checks that the HSTS `max-age` is set to one year.
-  - Ensures the `X-Frame-Options` header is set to `DENY`.
-- **ACM Certificate**:
-  - Confirms the ACM certificate uses `DNS` validation and is issued for the correct domain.
+#### `wiki.js/tests/ec2.tftest.hcl`
 
-## Gaps in Coverage and Recommendations
+*   **Purpose**: Validates the configuration of the AWS EC2 instance, its associated IAM role, and the EventBridge scheduler for instance management.
+*   **Validates**:
+    *   The EC2 instance type defaults to `t3.micro`.
+    *   The EC2 instance enforces IMDSv2 (`http_tokens = "required"`).
+    *   The EC2 instance's root block device is of type `gp3` and has a size of 20 GB.
+    *   The EC2 IAM role has a valid assume role policy.
+    *   The `AmazonSSMManagedInstanceCore` policy is attached to the EC2 IAM role.
+    *   The EC2 security group allows inbound TCP traffic on port 3000.
+    *   The absence of an SSH ingress rule in the EC2 security group.
+    *   The EventBridge scheduler creates both stop and start schedules for the EC2 instance, verifying their cron expressions and the `Australia/Brisbane` timezone.
 
-While the current tests provide good coverage for resource attributes, several areas could be improved to increase confidence in the deployment.
+#### `wiki.js/tests/vpc.tftest.hcl`
 
-### 1. VPC Routing
-- **Gap**: The tests confirm the existence of subnets and an Internet Gateway but do not validate the route tables. There is no assertion that public subnets have a route to the IGW or that private subnets have a route to a NAT Gateway for outbound access.
-- **Recommendation**: Add tests to assert that:
-    - The public route table has a `0.0.0.0/0` route pointing to the Internet Gateway.
-    - The private route table has a `0.0.0.0/0` route pointing to a NAT Gateway.
-    - Subnets are correctly associated with their respective route tables.
+*   **Purpose**: Validates the core AWS VPC configuration, including DNS settings and subnet arrangements.
+*   **Validates**:
+    *   The VPC has DNS support (`enable_dns_support`) and DNS hostnames (`enable_dns_hostnames`) enabled.
+    *   The VPC CIDR block defaults to `10.0.0.0/16`.
+    *   The creation of exactly three public subnets.
+    *   The creation of exactly three private subnets.
+    *   Public subnets are configured to auto-assign public IP addresses on launch.
+    *   Private subnets are configured *not* to auto-assign public IP addresses on launch.
+    *   Key resources (VPC, Internet Gateway) are tagged with the "environment" tag set to "shared-services".
 
-### 2. IAM Policy Granularity
-- **Gap**: The EC2 tests confirm the attachment of the AWS-managed `AmazonSSMManagedInstanceCore` policy but do not inspect the permissions of other IAM policies. The IAM role for the EventBridge Scheduler is also not tested.
-- **Recommendation**:
-    - Add a test to ensure the scheduler's IAM role has `ec2:StartInstances` and `ec2:StopInstances` permissions and that these permissions are scoped to the specific Wiki.js instance ARN.
-    - If any custom IAM policies are added, create tests to validate their JSON content and ensure they adhere to the principle of least privilege.
+### Gaps in Coverage
 
-### 3. Data Persistence and State
-- **Gap**: The current test suite has no visibility into the Docker Compose setup defined in `user-data.sh.tftpl`. The most significant risk is the lack of validation for data persistence for the PostgreSQL database.
-- **Recommendation**: While native Terraform tests cannot inspect the instance's runtime state, they can validate the configuration that enables it.
-    - Add a test to assert that an EBS volume is created and attached to the EC2 instance for database persistence.
-    - Add a test to validate that the `user-data.sh.tftpl` template file is correctly referenced and rendered in the EC2 instance configuration.
+Based on the project's architectural description and existing tests, several areas lack explicit test coverage:
 
-### 4. CloudFront Caching
-- **Gap**: The tests validate the protocol policy and allowed methods but do not assert the caching behavior. The default caching policy might not be optimal for a dynamic application like Wiki.js.
-- **Recommendation**: Add tests to assert that a specific cache policy is used, and validate key settings like TTLs and which headers, cookies, and query strings are forwarded to the origin.
+*   **CloudFront Origin Stability**: The tests do not verify that the CloudFront origin remains stable across EC2 instance restarts. The current architecture (public DNS name as origin with scheduled restarts) is a known critical bug where the public DNS name changes upon restart, breaking CloudFront.
+*   **CloudFront to EC2 Traffic Encryption**: While the test asserts `http-only` for the CloudFront origin, it does not confirm or recommend HTTPS-only communication between CloudFront and the EC2 origin, which is a significant security concern.
+*   **EC2 Egress Security Group Rules**: There are no tests to validate the outbound (egress) rules of the EC2 instance's security group. The current configuration is noted as a high-severity risk for being overly permissive.
+*   **EBS Root Volume Encryption**: The encryption status of the EC2 instance's root block device is not tested. This is identified as a medium-severity risk.
+*   **Network ACL Rules**: Only basic subnet creation is tested for the VPC. The Network ACLs (especially egress rules for public subnets) are not explicitly validated, leaving a medium-severity risk of overly permissive rules.
+*   **IAM Least Privilege (Scheduler Role)**: While the EC2 IAM role is tested, the specific permissions for the EventBridge scheduler's IAM role are broadly described as a low-severity risk (`ec2:DescribeInstances` on `*` resources) but not strictly validated for least privilege.
+*   **User Data Script**: The `user-data.sh.tftpl` script, which configures Docker and runs Wiki.js and PostgreSQL, is critical for application functionality but is not directly tested by Terraform's native tests.
+*   **Terraform Output Values**: The project's `outputs.tf` defines important values, but these outputs are not validated by any existing tests.
+*   **Application-Level Functionality**: Terraform tests validate infrastructure, but there are no integration or end-to-end tests to confirm the Wiki.js application itself is successfully deployed, running, and accessible after infrastructure provisioning.
+
+### Recommendations for Additional Tests
+
+To improve the confidence in the `wiki.js` Terraform deployment, the following tests are recommended:
+
+1.  **CloudFront Origin Persistence Test**:
+    *   Add a test to verify that the CloudFront distribution's origin uses a static endpoint (e.g., Elastic IP or Application Load Balancer DNS) for the EC2 instance when the scheduler is enabled, preventing downtime after instance restarts.
+2.  **CloudFront Origin HTTPS Enforcement Test**:
+    *   Introduce a test to assert that the CloudFront `custom_origin_config` uses `https-only` for `origin_protocol_policy`, once the EC2 instance is configured to handle HTTPS.
+3.  **EC2 Security Group Egress Restriction Test**:
+    *   Add tests to confirm that the EC2 instance's security group egress rules are limited to only essential outbound traffic (e.g., TCP 443 for external APIs, UDP 53 for DNS).
+4.  **EBS Volume Encryption Test**:
+    *   Create a test to verify that the EC2 instance's root block device has `encrypted = true`.
+5.  **Network ACL Egress Policy Test**:
+    *   Implement tests for public subnet Network ACLs to ensure egress rules are restrictive, allowing only necessary outbound traffic and return traffic for established connections.
+6.  **Granular IAM Permission Test**:
+    *   If possible, add a test to verify that the EventBridge scheduler's IAM role permissions are scoped to the specific EC2 instance ARN rather than wildcard resources for `ec2:DescribeInstances` actions.
+7.  **Output Value Validation Test**:
+    *   Add tests to assert that critical output values (e.g., CloudFront distribution domain name, any exposed endpoints) from `outputs.tf` are correctly generated and contain expected values.
+8.  **Application Health Integration Test (High-Level Recommendation)**:
+    *   While not a Terraform native test, consider adding an integration test using a tool like Terratest or an external monitoring system to perform an HTTP GET request against the deployed Wiki.js application's public URL and assert a successful HTTP 200 response. This would validate the full stack, including the `user-data.sh.tftpl` script and Docker Compose setup.
