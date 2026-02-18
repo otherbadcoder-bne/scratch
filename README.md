@@ -40,8 +40,11 @@ pip install checkov
 ### 3. Activate the hooks
 
 ```bash
-pre-commit install
+pre-commit install                        # commit-time hooks
+pre-commit install --hook-type pre-push   # pre-push AI review hook
 ```
+
+Both commands are required. `pre-commit install` alone will not wire up the pre-push hook.
 
 ### 4. (Optional) Run against all files
 
@@ -50,6 +53,8 @@ pre-commit run --all-files
 ```
 
 ### Hooks included
+
+**Commit-time** (run on every `git commit`):
 
 | Hook | Purpose |
 |---|---|
@@ -65,6 +70,12 @@ pre-commit run --all-files
 | `detect-private-key` | Blocks commits containing private keys |
 | `no-commit-to-branch` | Prevents direct commits to main |
 
+**Pre-push** (run on every `git push`, requires `pre-commit install --hook-type pre-push`):
+
+| Hook | Purpose |
+|---|---|
+| `ai-review` | Agentic review via Gemini CLI — reasons about intent, security logic, and architectural drift beyond what static tools catch. Blocks push on serious findings. Requires `gemini` CLI (see [google-gemini/gemini-cli](https://github.com/google-gemini/gemini-cli)). Override with `git push --no-verify`. |
+
 ## GitHub Actions
 
 CI runs on every PR to `main`. The following **repository secrets** must be configured under *Settings → Secrets and variables → Actions*:
@@ -75,5 +86,6 @@ CI runs on every PR to `main`. The following **repository secrets** must be conf
 | `AWS_SECRET_ACCESS_KEY` | Terraform CI | AWS credentials for `terraform plan` and tests |
 | `AWS_DEFAULT_REGION` | Terraform CI | AWS region (e.g. `ap-southeast-2`) |
 | `INFRACOST_API_KEY` | Infracost | API key from `infracost auth login` |
+| `GEMINI_API_KEY` | AI Review | Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey) |
 
 > `GITHUB_TOKEN` is provided automatically — no setup needed.

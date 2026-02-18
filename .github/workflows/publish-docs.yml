@@ -5,6 +5,8 @@ on:
     branches: [main]
     paths:
       - "wiki.js/README.md"
+      - ".ai/review-log/**"
+      - ".ai/docs/**"
       - ".github/workflows/publish-docs.yml"
 
 permissions:
@@ -73,6 +75,188 @@ jobs:
                           content: $content, description: "", editor: "markdown",
                           isPublished: true, isPrivate: false, locale: "en",
                           path: $path, tags: [], title: $title
+                      ) {
+                          responseResult { succeeded, message }
+                          page { id }
+                      }}
+                  }""",
+                  {"content": content, "path": page_path, "title": title},
+              )
+              resp = result["data"]["pages"]["create"]["responseResult"]
+
+          print(f"{resp['succeeded']}: {resp['message']}")
+          if not resp["succeeded"]:
+              print(f"::error::Wiki.js returned: {resp['message']}")
+              sys.exit(1)
+          PYEOF
+
+  publish-generated-docs:
+    name: Publish Generated Docs to Wiki.js
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for generated docs
+        id: check
+        run: |
+          COUNT=$(find .ai/docs -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+          echo "count=${COUNT}" >> $GITHUB_OUTPUT
+
+      - name: Publish each doc to Wiki.js
+        if: steps.check.outputs.count != '0'
+        env:
+          WIKIJS_URL: ${{ secrets.WIKIJS_URL }}
+          WIKIJS_API_KEY: ${{ secrets.WIKIJS_API_KEY }}
+        run: |
+          python3 << 'PYEOF'
+          import json, os, sys, urllib.request
+          from pathlib import Path
+
+          docs_dir  = Path(".ai/docs")
+          repo_name = "${{ github.repository }}".split("/")[-1]
+          repo_url  = "https://github.com/${{ github.repository }}"
+
+          # Map filename stem → (Wiki.js path template, page title)
+          DOC_MAP = {
+              "architecture":        ("GitHub-Projects/{repo}/architecture",       "Architecture Overview"),
+              "features":            ("GitHub-Projects/{repo}/features",           "Feature List"),
+              "developer-guide":     ("GitHub-Projects/{repo}/developer-guide",    "Developer Guide"),
+              "support-guide":       ("GitHub-Projects/{repo}/support-guide",      "Support Guide"),
+              "testing":             ("GitHub-Projects/{repo}/testing",            "Test Procedures"),
+              "bug-list":            ("GitHub-Projects/{repo}/bug-list",           "Bug List & Recommendations"),
+              "performance":         ("GitHub-Projects/{repo}/performance",        "Performance Improvements"),
+              "ai-development-plan": ("GitHub-Projects/{repo}/ai-development-plan","AI Development Plan"),
+          }
+
+          gql_url = os.environ["WIKIJS_URL"] + "/graphql"
+          headers = {
+              "Authorization": f"Bearer {os.environ['WIKIJS_API_KEY']}",
+              "Content-Type": "application/json",
+          }
+
+          def graphql(query, variables=None):
+              payload = json.dumps({"query": query, "variables": variables or {}}).encode()
+              req = urllib.request.Request(gql_url, data=payload, headers=headers)
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      return json.loads(resp.read())
+              except urllib.error.HTTPError as e:
+                  print(f"::error::Wiki.js API error {e.code}: {e.read().decode()}")
+                  return None
+
+          def upsert_page(page_path, title, content):
+              result = graphql(
+                  """mutation ($content: String!, $path: String!, $title: String!) {
+                      pages { create(
+                          content: $content, description: "", editor: "markdown",
+                          isPublished: true, isPrivate: false, locale: "en",
+                          path: $path, tags: ["generated", "ai-docs"], title: $title
+                      ) { responseResult { succeeded, message } page { id } } }
+                  }""",
+                  {"content": content, "path": page_path, "title": title},
+              )
+              if result is None:
+                  return
+              resp = result["data"]["pages"]["create"]["responseResult"]
+              if not resp["succeeded"] and "already exists" in resp["message"].lower():
+                  print(f"  Page exists at /{page_path} — skipping (update requires page ID)")
+              else:
+                  print(f"  {'✓' if resp['succeeded'] else '✗'} {resp['message']}")
+
+          for doc_file in sorted(docs_dir.glob("*.md")):
+              stem = doc_file.stem
+              if stem not in DOC_MAP:
+                  print(f"Skipping unmapped doc: {stem}")
+                  continue
+              path_tpl, title = DOC_MAP[stem]
+              page_path = path_tpl.format(repo=repo_name)
+              content   = f"> *Auto-generated — do not edit manually. [Source]({repo_url})*\n\n"
+              content  += doc_file.read_text()
+              print(f"Publishing: {title} → /{page_path}")
+              upsert_page(page_path, title, content)
+          PYEOF
+
+  publish-ai-review-log:
+    name: Publish AI Review Log to Wiki.js
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check for review logs
+        id: check
+        run: |
+          COUNT=$(find .ai/review-log -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+          echo "count=${COUNT}" >> $GITHUB_OUTPUT
+
+      - name: Publish AI review log to Wiki.js
+        if: steps.check.outputs.count != '0'
+        env:
+          WIKIJS_URL: ${{ secrets.WIKIJS_URL }}
+          WIKIJS_API_KEY: ${{ secrets.WIKIJS_API_KEY }}
+        run: |
+          python3 << 'PYEOF'
+          import json, os, sys, urllib.request
+          from pathlib import Path
+
+          log_dir = Path(".ai/review-log")
+          log_files = sorted(log_dir.glob("*.md"), reverse=True)  # newest first
+
+          if not log_files:
+              print("No review logs found — skipping.")
+              sys.exit(0)
+
+          # Combine all logs into one Wiki.js page (newest first, last 20)
+          sections = []
+          for f in log_files[:20]:
+              sections.append(f.read_text())
+
+          repo_url = "https://github.com/${{ github.repository }}"
+          content = f"> **Source:** [{repo_url}]({repo_url}/tree/main/.ai/review-log)\n\n---\n\n"
+          content += "\n\n---\n\n".join(sections)
+
+          url = os.environ["WIKIJS_URL"] + "/graphql"
+          headers = {
+              "Authorization": f"Bearer {os.environ['WIKIJS_API_KEY']}",
+              "Content-Type": "application/json",
+          }
+          page_path = "GitHub-Projects/ai-review-log"
+          title     = "AI Review Log"
+
+          def graphql(query, variables=None):
+              payload = json.dumps({"query": query, "variables": variables or {}}).encode()
+              req = urllib.request.Request(url, data=payload, headers=headers)
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      return json.loads(resp.read())
+              except urllib.error.HTTPError as e:
+                  body = e.read().decode()
+                  print(f"::error::Wiki.js API returned HTTP {e.code}: {body}")
+                  sys.exit(1)
+
+          result   = graphql("{ pages { list(orderBy: TITLE) { id, path } } }")
+          pages    = result.get("data", {}).get("pages", {}).get("list", [])
+          existing = next((p for p in pages if p["path"] == page_path), None)
+
+          if existing:
+              page_id = existing["id"]
+              print(f"Updating existing page (ID: {page_id})...")
+              result = graphql(
+                  """mutation ($id: Int!, $content: String!, $tags: [String]!) {
+                      pages { update(id: $id, content: $content, isPublished: true, tags: $tags) {
+                          responseResult { succeeded, message }
+                      }}
+                  }""",
+                  {"id": page_id, "content": content, "tags": ["ai", "review"]},
+              )
+              resp = result["data"]["pages"]["update"]["responseResult"]
+          else:
+              print(f"Creating new page at /{page_path}...")
+              result = graphql(
+                  """mutation ($content: String!, $path: String!, $title: String!) {
+                      pages { create(
+                          content: $content, description: "Automated AI code review log",
+                          editor: "markdown", isPublished: true, isPrivate: false,
+                          locale: "en", path: $path, tags: ["ai", "review"], title: $title
                       ) {
                           responseResult { succeeded, message }
                           page { id }
