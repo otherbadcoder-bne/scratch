@@ -4,12 +4,13 @@
 # Reads the codebase at runtime, generates 8 standard documents via Gemini CLI,
 # and saves them to .ai/docs/ ready for Wiki.js publishing on merge to main.
 #
-# Usage:  scripts/generate-docs.sh [doc-type]
+# Usage:  scripts/generate-docs.sh [doc-type] [--auto-commit]
 #         doc-type: architecture | features | developer | support |
 #                   testing | bugs | performance | ai-plan | all (default)
+# Flags:  --auto-commit   commit and push generated docs (used by CI)
 #
 # Output: .ai/docs/*.md
-# Publish: handled by publish-docs.yml on merge to main
+# Publish: handled by generate-and-publish-docs.yml on merge to main
 
 set -euo pipefail
 
@@ -30,7 +31,11 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 DOCS_DIR="${REPO_ROOT}/.ai/docs"
 mkdir -p "${DOCS_DIR}"
 
-# Parse args — support both positional doc type and --auto-commit flag
+# Shared helpers: discover_stack, discover_context_files
+# shellcheck source=scripts/lib.sh
+source "${REPO_ROOT}/scripts/lib.sh"
+
+# ── parse args ────────────────────────────────────────────────────────────────
 TARGET="all"
 AUTO_COMMIT=false
 for arg in "$@"; do
@@ -40,39 +45,51 @@ for arg in "$@"; do
   esac
 done
 
+# ── freshness check (interactive only) ───────────────────────────────────────
+if [[ "${AUTO_COMMIT}" == "false" ]] && [[ -t 1 ]]; then
+  LAST_COMMIT=$(git -C "${REPO_ROOT}" log -1 --format="%H" -- ".ai/docs" 2>/dev/null || true)
+  if [[ -n "$LAST_COMMIT" ]]; then
+    LAST_TS=$(git -C "${REPO_ROOT}" log -1 --format="%ct" -- ".ai/docs" 2>/dev/null)
+    AGE_DAYS=$(( ( $(date +%s) - LAST_TS ) / 86400 ))
+    LAST_DATE=$(git -C "${REPO_ROOT}" log -1 --format="%cd" --date=short -- ".ai/docs" 2>/dev/null)
+
+    CHANGED=$(git -C "${REPO_ROOT}" diff --name-only "${LAST_COMMIT}..HEAD" -- \
+      '*.tf' '*.py' '*.sh' '*.md' 'Dockerfile*' 'docker-compose*' 2>/dev/null \
+      | grep -v '^\.ai/' || true)
+
+    bold ""
+    bold "=== Doc Freshness ==="
+    info "Last generated: ${LAST_DATE} (${AGE_DAYS} day(s) ago)"
+
+    if [[ -n "$CHANGED" ]]; then
+      CHANGED_COUNT=$(printf '%s\n' "$CHANGED" | wc -l | tr -d ' ')
+      info "Source changes since last generation (${CHANGED_COUNT} file(s)):"
+      printf '%s\n' "$CHANGED" | sed 's/^/     /'
+      DEFAULT_ANSWER="Y"
+    elif (( AGE_DAYS > 14 )); then
+      info "No source changes, but docs are ${AGE_DAYS} days old."
+      DEFAULT_ANSWER="Y"
+    else
+      info "Docs are current — ${AGE_DAYS} day(s) old, no source changes."
+      DEFAULT_ANSWER="N"
+    fi
+
+    printf '\n'
+    read -r -p "  Regenerate? [${DEFAULT_ANSWER}] " USER_ANSWER < /dev/tty || USER_ANSWER="${DEFAULT_ANSWER}"
+    USER_ANSWER="${USER_ANSWER:-${DEFAULT_ANSWER}}"
+    if [[ ! "${USER_ANSWER}" =~ ^[Yy]$ ]]; then
+      info "Skipping."
+      exit 0
+    fi
+    bold ""
+  fi
+fi
+
 TIMEOUT=300  # doc generation needs more time than review
 
-# ── context discovery (same as ai-review.sh) ─────────────────────────────────
-
-discover_stack() {
-  local stack=() files
-  files=$(git -C "${REPO_ROOT}" ls-files 2>/dev/null)
-
-  echo "$files" | grep -q '\.tf$'                                          && stack+=("Terraform")
-  [[ -f "${REPO_ROOT}/go.mod" ]]                                           && stack+=("Go")
-  [[ -f "${REPO_ROOT}/Cargo.toml" ]]                                       && stack+=("Rust")
-  [[ -f "${REPO_ROOT}/package.json" ]]                                     && stack+=("Node.js")
-  [[ -f "${REPO_ROOT}/pyproject.toml" || -f "${REPO_ROOT}/requirements.txt" ]] && stack+=("Python")
-  [[ -f "${REPO_ROOT}/Gemfile" ]]                                          && stack+=("Ruby")
-  [[ -f "${REPO_ROOT}/pom.xml" || -f "${REPO_ROOT}/build.gradle" ]]       && stack+=("Java/JVM")
-  [[ -f "${REPO_ROOT}/Dockerfile" || -f "${REPO_ROOT}/docker-compose.yml" ]] && stack+=("Docker")
-  [[ -d "${REPO_ROOT}/.github/workflows" ]]                                && stack+=("GitHub Actions")
-  [[ -f "${REPO_ROOT}/cdk.json" ]]                                         && stack+=("AWS CDK")
-
-  local IFS=", "; echo "${stack[*]:-unknown}"
-}
-
-read_context_files() {
-  local out=""
-  for f in AGENTS.md README.md CONTRIBUTING.md ARCHITECTURE.md; do
-    [[ -f "${REPO_ROOT}/${f}" ]] && out+="$(head -n 80 "${REPO_ROOT}/${f}")"$'\n\n'
-  done
-  printf '%s' "$out"
-}
-
+# ── context collection ────────────────────────────────────────────────────────
 collect_files() {
-  # Collect content of tracked files matching given patterns, capped per file
-  local total="" cap=800  # lines per file
+  local total="" cap=800
   for pattern in "$@"; do
     while IFS= read -r f; do
       [[ -f "${REPO_ROOT}/${f}" ]] || continue
@@ -86,7 +103,7 @@ collect_files() {
 }
 
 STACK=$(discover_stack)
-CONTEXT=$(read_context_files)
+CONTEXT=$(discover_context_files)
 REPO_NAME=$(basename "${REPO_ROOT}")
 
 # ── gemini call with timeout ──────────────────────────────────────────────────
@@ -98,19 +115,19 @@ call_gemini() {
     alarm(${TIMEOUT});
     open(STDIN, '<', \$ARGV[0]) or die \"cannot open: \$!\";
     exec('gemini', '-p', '');
-  " -- "${prompt_file}" 2>/dev/null
+  " -- "${prompt_file}"
 }
 
 # ── document generator ────────────────────────────────────────────────────────
 generate() {
-  local slug="$1"      # filename stem
-  local title="$2"     # human title for output
-  local files="$3"     # pre-collected file content
-  local instruction="$4"  # what to generate
+  local slug="$1"
+  local title="$2"
+  local files="$3"
+  local instruction="$4"
 
   local output="${DOCS_DIR}/${slug}.md"
   local prompt_file
-  prompt_file=$(mktemp /tmp/gendoc-prompt.XXXXXX)
+  prompt_file=$(mktemp)
   trap 'rm -f "${prompt_file}"; trap - RETURN' RETURN
 
   cat > "${prompt_file}" << PROMPT
@@ -135,6 +152,8 @@ ${instruction}
 - Be accurate — only describe what you can see in the source files
 - Do not speculate about features not evidenced in the code
 - Audience and tone are specified in the task above
+- For diagrams, use ASCII art only — do NOT use Mermaid or any fenced code block
+  diagram syntax, as the target Wiki.js instance does not support it
 PROMPT
 
   info "Generating: ${title}..."
@@ -149,14 +168,13 @@ PROMPT
 }
 
 # ── document definitions ──────────────────────────────────────────────────────
-
 doc_architecture() {
   header "Architecture Overview"
   local files
   files=$(collect_files '\.tf$' 'entrypoint.*\.py$' 'main\.py$' 'docker-compose.*\.ya?ml$' 'Dockerfile')
   generate "architecture" "Architecture Overview" "$files" \
     "Generate an architecture overview document for a technical audience.
-Include: system overview, component diagram (ASCII or Mermaid), data flow end-to-end,
+Include: system overview, ASCII component diagram, data flow end-to-end,
 AWS services and their roles, infrastructure design decisions, deployment model,
 environment differences (dev/prod if visible), and any notable design patterns."
 }
@@ -246,24 +264,35 @@ bold "=== Documentation Generator (Gemini CLI) ==="
 info "Repo: ${REPO_NAME} | Stack: ${STACK} | Output: ${DOCS_DIR}"
 bold ""
 
+FAILED=0
+
 case "${TARGET}" in
-  architecture)   doc_architecture ;;
-  features)       doc_features ;;
-  developer)      doc_developer ;;
-  support)        doc_support ;;
-  testing)        doc_testing ;;
-  bugs)           doc_bugs ;;
-  performance)    doc_performance ;;
-  ai-plan)        doc_ai_plan ;;
+  architecture)  doc_architecture  || FAILED=$((FAILED + 1)) ;;
+  features)      doc_features      || FAILED=$((FAILED + 1)) ;;
+  developer)     doc_developer     || FAILED=$((FAILED + 1)) ;;
+  support)       doc_support       || FAILED=$((FAILED + 1)) ;;
+  testing)       doc_testing       || FAILED=$((FAILED + 1)) ;;
+  bugs)          doc_bugs          || FAILED=$((FAILED + 1)) ;;
+  performance)   doc_performance   || FAILED=$((FAILED + 1)) ;;
+  ai-plan)       doc_ai_plan       || FAILED=$((FAILED + 1)) ;;
   all)
-    doc_architecture
-    doc_features
-    doc_developer
-    doc_support
-    doc_testing
-    doc_bugs
-    doc_performance
-    doc_ai_plan
+    # Run all 8 docs in parallel; capture output per-doc then print in order.
+    PARALLEL_OUTDIR=$(mktemp -d)
+
+    doc_architecture > "${PARALLEL_OUTDIR}/1.out" 2>&1 & PIDS=($!)
+    doc_features     > "${PARALLEL_OUTDIR}/2.out" 2>&1 & PIDS+=($!)
+    doc_developer    > "${PARALLEL_OUTDIR}/3.out" 2>&1 & PIDS+=($!)
+    doc_support      > "${PARALLEL_OUTDIR}/4.out" 2>&1 & PIDS+=($!)
+    doc_testing      > "${PARALLEL_OUTDIR}/5.out" 2>&1 & PIDS+=($!)
+    doc_bugs         > "${PARALLEL_OUTDIR}/6.out" 2>&1 & PIDS+=($!)
+    doc_performance  > "${PARALLEL_OUTDIR}/7.out" 2>&1 & PIDS+=($!)
+    doc_ai_plan      > "${PARALLEL_OUTDIR}/8.out" 2>&1 & PIDS+=($!)
+
+    for i in "${!PIDS[@]}"; do
+      wait "${PIDS[$i]}" || FAILED=$((FAILED + 1))
+      cat "${PARALLEL_OUTDIR}/$((i + 1)).out"
+    done
+    rm -rf "${PARALLEL_OUTDIR}"
     ;;
   *)
     warn "Unknown doc type: ${TARGET}"
@@ -275,14 +304,16 @@ esac
 bold ""
 bold "=== Done ==="
 
+if (( FAILED > 0 )); then
+  warn "${FAILED} document(s) failed to generate."
+fi
+
 # ── auto-commit ───────────────────────────────────────────────────────────────
 if [[ "${AUTO_COMMIT}" == "true" ]]; then
   git -C "${REPO_ROOT}" add "${DOCS_DIR}" 2>/dev/null || true
   if ! git -C "${REPO_ROOT}" diff --cached --quiet 2>/dev/null; then
     git -C "${REPO_ROOT}" commit --no-verify \
       -m "docs: auto-generate documentation [skip ci]"
-    # Push the doc commit now so it's included with this push.
-    # The outer git push will then be a no-op ("Everything up-to-date").
     REMOTE=$(git -C "${REPO_ROOT}" rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null \
       | cut -d/ -f1)
     REMOTE="${REMOTE:-origin}"
@@ -294,5 +325,7 @@ if [[ "${AUTO_COMMIT}" == "true" ]]; then
   fi
 else
   info "Review files in ${DOCS_DIR} then commit."
-  info "On merge to main, publish-docs.yml will push them to Wiki.js."
+  info "On merge to main, generate-and-publish-docs.yml will push them to Wiki.js."
 fi
+
+[[ $FAILED -eq 0 ]]

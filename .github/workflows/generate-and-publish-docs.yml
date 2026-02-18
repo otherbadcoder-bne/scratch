@@ -71,6 +71,13 @@ jobs:
         with:
           node-version: "20"
 
+      - name: Cache Gemini CLI
+        if: steps.freshness.outputs.generate == 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: gemini-cli-${{ runner.os }}
+
       - name: Install Gemini CLI
         if: steps.freshness.outputs.generate == 'true'
         run: npm install -g @google/gemini-cli
