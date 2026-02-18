@@ -1,90 +1,74 @@
-## Performance Characteristics and Improvement Opportunities for Wiki.js Deployment
+# Wiki.js Deployment Performance Analysis
 
-This document analyzes the current performance profile of the Wiki.js deployment and identifies areas for improvement, ranging from quick wins to longer-term architectural enhancements.
+This document provides an analysis of the Wiki.js deployment's performance characteristics, identifies potential bottlenecks, and offers recommendations for improvement, suitable for a technical audience.
 
 ## Current Performance Profile
 
-The current Wiki.js deployment utilizes a straightforward architecture primarily designed for cost-efficiency and ease of deployment for experimental use cases.
+The current Wiki.js deployment utilizes a minimalist architecture, optimized for cost-efficiency and ease of deployment within a sandbox environment.
 
-### Resource Allocations and Sizing
+### Infrastructure Sizing and Resource Allocation
+*   **EC2 Instance**: The Wiki.js application and its PostgreSQL database run on a single `t3.micro` EC2 instance. This instance type is part of the burstable performance family, suitable for workloads with moderate baseline CPU utilization and occasional spikes.
+*   **EBS Storage**: The EC2 instance's root volume is a 20GB `gp3` EBS volume. `gp3` volumes offer a consistent baseline performance with configurable IOPS and throughput, providing adequate storage and I/O for a small application.
+*   **Database**: PostgreSQL 15-alpine runs as a Docker container, storing its data persistently on the host's EBS volume.
+*   **Networking**: The application is deployed within a VPC with both public and private subnets across three Availability Zones, though only one public subnet is currently utilized for the EC2 instance.
 
-*   **EC2 Instance**: A single `t3.micro` instance is used for both the Wiki.js application and its PostgreSQL database. `t3.micro` instances are burstable, meaning they provide a baseline level of CPU performance with the ability to burst above it using CPU credits. This instance type is suitable for workloads with low-to-moderate CPU utilization, but sustained high usage can lead to CPU credit exhaustion and performance degradation.
-*   **EBS Volume**: The EC2 instance's root block device is a `20GB gp3` volume. GP3 volumes offer a good balance of price and performance, with configurable IOPS and throughput. However, 20GB is a relatively small size, which could become a constraint as the Wiki.js content and database grow.
-*   **Database**: PostgreSQL `15-alpine` runs as a Docker container on the same `t3.micro` instance, sharing resources with the Wiki.js application. Database performance is directly tied to the EC2 instance's capabilities and EBS volume performance.
-
-### Caching and Content Delivery
-
+### Content Delivery and Caching
 *   **CloudFront Distribution**: A CloudFront distribution fronts the EC2 instance, providing TLS termination and applying security headers.
-*   **Caching Policy**: The CloudFront distribution currently uses the `Managed-CachingDisabled` policy. This means that CloudFront performs no caching of content, effectively forwarding every request to the EC2 origin.
+*   **Caching Strategy**: The CloudFront configuration explicitly uses the `Managed-CachingDisabled` policy. This means that all requests hitting the CloudFront distribution are forwarded directly to the EC2 origin, with no content being cached at the edge locations.
 
-### Concurrency Model
+### Operational Availability
+*   **Scheduled Stops/Starts**: The EC2 instance is configured with an EventBridge Scheduler to automatically stop outside working hours (Mon-Fri, 7 PM - 7 AM AEST) and start before the next workday. This strategy aims to reduce operational costs.
 
-*   The architecture is based on a single EC2 instance, running Wiki.js and PostgreSQL via Docker Compose. This design inherently limits concurrency and scalability, as there is no load balancing or horizontal scaling mechanism. All requests are handled by this single server.
+## Identified Bottlenecks and Risks
 
-### Timeouts and Availability
+Several aspects of the current architecture present potential performance bottlenecks or risks to availability, particularly if the Wiki.js instance were to experience increased traffic or be considered for production use.
 
-*   **Scheduled Stops/Starts**: The EC2 instance is configured to stop and start daily outside of working hours (Mon-Fri 7am-7pm AEST) using EventBridge Scheduler. While this is a cost-saving measure, it introduces periods of unavailability and cold start times.
-*   **CloudFront Origin Protocol**: Traffic between CloudFront and the EC2 origin is configured as `http-only` on port 3000. This is a security risk (unencrypted traffic) and could also impact performance by preventing the use of more efficient protocols like HTTP/2 for origin fetches.
+*   **No CloudFront Caching**: The disabled caching policy is the most significant performance bottleneck. Every single request, regardless of content type (static assets like images, CSS, JavaScript, or dynamic page requests), traverses from CloudFront's edge location to the EC2 instance. This significantly increases latency for users and places a higher load directly on the `t3.micro` EC2 instance.
+*   **Single Point of Failure**: The entire application (Wiki.js and its database) resides on a single EC2 instance. Any failure of this instance, its underlying host, or the Docker containers within it will result in complete service unavailability.
+*   **Dynamic EC2 Origin for CloudFront**: As identified in `.ai/docs/bug-list.md`, the CloudFront distribution uses the EC2 instance's public DNS name as its origin. When an EC2 instance is stopped and started, its public DNS name changes. This renders the CloudFront distribution's origin invalid, leading to service disruption until the CloudFront distribution is manually updated or the DNS record is propagated. This is a critical availability and performance risk.
+*   **`t3.micro` Instance Resource Limits**: While cost-effective, a `t3.micro` instance has limited CPU credits and memory. Under sustained or bursty traffic, the CPU credits can be exhausted, leading to CPU throttling and degraded application performance.
+*   **Cold Starts after Scheduled Downtime**: The scheduled stopping and starting of the EC2 instance introduce "cold start" periods. During these times, the instance needs to boot up, Docker containers need to initialize, and the Wiki.js application needs to fully start, resulting in temporary unavailability and reduced performance until all services are operational.
+*   **Shared Resources on Single Host**: Running both the Wiki.js application and its PostgreSQL database on the same EC2 instance means they contend for the same CPU, memory, and I/O resources. This can limit the performance of both components under load.
 
-## Identified Bottlenecks or Risks
+## Specific Recommendations with Rationale
 
-### Critical Bottleneck: CloudFront Caching Disabled
-The most significant performance bottleneck is the disabled caching on the CloudFront distribution. Every user request, including those for static assets (images, CSS, JavaScript), is forwarded directly to the `t3.micro` EC2 instance. This drastically increases the load on the instance and results in higher latency for users who are geographically distant from the AWS region.
+### Quick Wins (Immediate Impact, Lower Effort)
 
-### Critical Risk: CloudFront Origin Breaks on EC2 Restart
-As identified in `.ai/docs/bug-list.md`, the CloudFront distribution uses the dynamic public DNS name of the EC2 instance as its origin. When the scheduled stop/start occurs, the public DNS name changes, causing the CloudFront distribution to point to a non-existent or incorrect origin. This leads to complete service unavailability after each restart until the CloudFront distribution is manually updated or Terraform reapplied. While primarily an availability issue, zero availability means zero performance.
+1.  **Implement a Static CloudFront Origin**:
+    *   **Rationale**: The current reliance on the EC2 instance's dynamic public DNS name causes service outages when the instance restarts. Using a static endpoint ensures continuous availability of the CloudFront distribution.
+    *   **Recommendation**: Attach an **Elastic IP address** to the EC2 instance. Update the CloudFront origin's `domain_name` to use this static Elastic IP.
 
-### Performance Risk: `t3.micro` CPU Credit Exhaustion
-For anything beyond very light usage, the `t3.micro` instance running both the web application and its database is at high risk of CPU credit exhaustion. Once credits are depleted, the instance's CPU performance is throttled to its baseline, leading to slow response times and a poor user experience.
+2.  **Enable Selective CloudFront Caching**:
+    *   **Rationale**: Disabling caching for all content drastically increases latency and origin load. Caching static assets like CSS, JavaScript files, and images significantly reduces the burden on the EC2 instance and improves load times for users.
+    *   **Recommendation**: Create a more granular CloudFront cache policy. For instance, cache static content (e.g., `/assets/*`, `/uploads/*`) for an appropriate duration while maintaining `CachingDisabled` or minimal caching for dynamic HTML content.
 
-### Security & Performance Risk: `http-only` CloudFront Origin
-The use of `http-only` for communication between CloudFront and the origin EC2 instance is a security risk. It also prevents CloudFront from leveraging more modern and efficient protocols (like HTTP/2) for origin communication, which could offer minor performance improvements.
+3.  **Monitor `t3.micro` Performance**:
+    *   **Rationale**: The `t3.micro` instance is susceptible to CPU credit exhaustion under sustained load. Proactive monitoring can identify if it's becoming a bottleneck before it impacts users.
+    *   **Recommendation**: Implement AWS CloudWatch monitoring for the EC2 instance, focusing on CPU Utilization and `CPUCreditBalance` metrics. If credit balance frequently drops or CPU utilization consistently hits limits, an instance type upgrade may be necessary.
 
-### Scalability Limit: Single Instance Architecture
-The single EC2 instance architecture presents a hard limit on scalability. As user traffic increases, this single server will become a bottleneck, unable to handle increased load, leading to degraded performance and potential outages.
+### Longer-Term Improvements (Higher Impact, Moderate to High Effort)
 
-## Specific Recommendations
+1.  **Introduce an Application Load Balancer (ALB)**:
+    *   **Rationale**: An ALB provides a stable, highly available endpoint for the application, regardless of EC2 instance restarts or failures. It also enables moving the EC2 instance to a private subnet for enhanced security.
+    *   **Recommendation**:
+        *   Place the EC2 instance in a private subnet.
+        *   Deploy an ALB in the public subnets, configured to forward traffic to the EC2 instance (possibly via a Target Group).
+        *   Update the CloudFront origin to point to the ALB's DNS name. This also inherently solves the dynamic EC2 public DNS issue.
 
-### Quick Wins (High Impact, Low Effort)
+2.  **Enable HTTPS Between CloudFront and Origin**:
+    *   **Rationale**: Sending traffic unencrypted (`http-only`) between CloudFront and the EC2 origin is a security risk. While not a direct performance issue, it's a critical security vulnerability that should be addressed in a production-grade system.
+    *   **Recommendation**: Configure the Wiki.js Docker setup (or introduce a proxy like Nginx on the EC2 instance) to handle HTTPS traffic on an internal port. Update the CloudFront `custom_origin_config` to use `https-only` and the appropriate HTTPS port.
 
-1.  **Enable CloudFront Caching**:
-    *   **Recommendation**: Configure CloudFront to cache static assets (e.g., images, CSS, JavaScript files) by creating appropriate cache behaviors and policies. For dynamic content, use a `CachingOptimized` or custom policy that respects `Cache-Control` headers from the origin.
-    *   **Rationale**: This will significantly reduce the load on the EC2 instance, decrease latency for end-users, and improve overall responsiveness by serving content directly from CloudFront's edge locations.
-    *   **Estimated Impact**: High.
+3.  **Migrate Database to AWS RDS**:
+    *   **Rationale**: Running the database on the same EC2 instance creates a single point of failure and resource contention. AWS RDS provides a managed, scalable, and highly available database service, offloading operational overhead.
+    *   **Recommendation**: Provision an AWS RDS PostgreSQL instance. Update the Wiki.js Docker Compose configuration to connect to the RDS endpoint instead of the local `database` service. This would require moving the EC2 instance to a private subnet with appropriate database connectivity.
 
-2.  **Fix CloudFront Origin with Elastic IP**:
-    *   **Recommendation**: Allocate an Elastic IP address and associate it with the EC2 instance. Update the CloudFront origin configuration to use this static Elastic IP address instead of the dynamic public DNS name.
-    *   **Rationale**: This directly resolves the critical bug where CloudFront breaks after EC2 restarts, ensuring continuous availability of the application.
-    *   **Estimated Impact**: Critical for availability, foundational for consistent performance.
-
-3.  **Upgrade CloudFront to EC2 Origin to `https-only`**:
-    *   **Recommendation**: Configure the Wiki.js application in Docker to serve HTTPS traffic (e.g., via a self-signed certificate if public trust is not required for internal CF-EC2 communication). Then, change the `origin_protocol_policy` in `wiki.js/cloudfront.tf` from `http-only` to `https-only` and specify the correct `https_port`.
-    *   **Rationale**: Enhances security by encrypting traffic between CloudFront and the origin. Also allows for future performance optimizations that rely on HTTPS origin communication.
-    *   **Estimated Impact**: Medium for security, minor for performance.
-
-### Longer-Term Improvements (Higher Effort, Greater Scalability)
-
-1.  **Upgrade EC2 Instance Type (Conditional)**:
-    *   **Recommendation**: Monitor the `t3.micro` instance's CPU utilization and CPU credit balance. If credit exhaustion becomes a frequent issue under typical load, consider upgrading to a larger `t3` instance (e.g., `t3.small` or `t3.medium`) for a higher baseline CPU performance, or transition to a fixed-performance instance type (e.g., `m` or `c` series) if sustained high usage is expected.
-    *   **Rationale**: Addresses potential CPU bottlenecks, ensuring the application has sufficient compute resources to operate smoothly.
-    *   **Estimated Impact**: High if `t3.micro` is a bottleneck.
-
-2.  **Migrate Database to AWS RDS**:
-    *   **Recommendation**: Decouple the PostgreSQL database from the EC2 instance by migrating it to Amazon RDS (Relational Database Service).
-    *   **Rationale**: RDS provides a managed database service, handling backups, patching, and scaling. It significantly improves database performance, reliability, and security compared to a self-managed Docker container on the application server. This also frees up resources on the EC2 instance for the Wiki.js application itself.
-    *   **Estimated Impact**: High.
-
-3.  **Implement Application Load Balancer (ALB) and Auto Scaling Group (ASG)**:
-    *   **Recommendation**: Introduce an Application Load Balancer (ALB) in front of an Auto Scaling Group (ASG) containing the EC2 instance(s) running Wiki.js. CloudFront would then point to the ALB as its origin. Place the EC2 instances in private subnets.
-    *   **Rationale**:
-        *   **Scalability**: ASG automatically adds or removes instances based on demand, ensuring performance under varying loads.
-        *   **High Availability**: Distributes traffic across multiple instances and availability zones, providing fault tolerance.
-        *   **Static Origin**: The ALB provides a stable, static endpoint for CloudFront, robustly resolving the dynamic DNS issue.
-        *   **Security**: Moving application servers to private subnets behind an ALB enhances network security.
-    *   **Estimated Impact**: Very high, transforms the architecture into a scalable and highly available system.
+4.  **Implement Auto Scaling Group for EC2**:
+    *   **Rationale**: For increased availability and scalability, an Auto Scaling Group (ASG) can automatically launch new EC2 instances to replace unhealthy ones or to scale out during periods of high demand.
+    *   **Recommendation**: Create an Auto Scaling Group with a Launch Template that provisions the Wiki.js EC2 instance. Place the ASG behind an ALB. This would require further re-architecting of the Docker Compose setup to be stateless and suitable for multi-instance deployment.
 
 ## Infrastructure Sizing Observations
 
-*   The current `t3.micro` instance type and `20GB gp3` EBS volume are typical choices for very small-scale or experimental deployments where cost is the primary driver.
-*   For any production-like workload, or even a personal wiki that sees moderate use or content growth, this sizing is likely to be inadequate and will lead to performance issues and potential data storage constraints over time.
-*   The absence of a NAT Gateway (as noted in `wiki.js/vpc.tf`) implies that private subnets currently have no outbound internet access. While stated as a cost-saving measure, this would prevent instances in private subnets from accessing package repositories or external APIs, which would need to be considered for any future expansion or maintenance of the EC2 instances.
+*   **`t3.micro` Instance**: As a "scratch/sandbox" environment, the `t3.micro` instance is a cost-effective choice. However, for any workload beyond very light personal use, it is critically undersized and will likely experience performance degradation and service interruptions due to CPU credit exhaustion.
+*   **20GB `gp3` EBS Volume**: The 20GB size is adequate for a basic operating system and initial application data. The `gp3` type offers decent baseline I/O performance. For a growing wiki with more content, persistent file uploads, or increased database activity, a larger volume with higher provisioned IOPS/throughput might be required.
+*   **VPC Structure**: The initial VPC setup with public and private subnets across multiple Availability Zones provides a robust foundation for future scalability and high availability enhancements, even if not fully utilized by the current single-instance deployment.

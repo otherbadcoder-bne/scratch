@@ -1,67 +1,126 @@
-This guide is for the support team. It explains how the Wiki.js service works, what can go wrong, and what to do about it.
+# Wiki.js Support Guide
 
-## How The System Works: A Plain-Language Guide
+This guide is designed for the support team to understand, troubleshoot, and resolve common issues with the Wiki.js deployment on AWS. It focuses on providing clear explanations and actionable steps, even without deep technical knowledge.
 
-Imagine the Wiki.js service is like a restaurant.
+## How the System Works (In Plain Language)
 
-*   **The Customer (Web Browser):** This is you or a user trying to access the wiki website.
-*   **The Bouncer (Amazon CloudFront):** When you go to the wiki's web address, you first meet the bouncer. This service provides a secure, encrypted connection (HTTPS) and checks your request. It's the front door to the service and makes sure traffic flows smoothly and securely. It also has a list of security rules to protect the site.
-*   **The Kitchen (EC2 Server):** After the bouncer lets you in, your request goes to the kitchen. This is a small virtual computer (an EC2 instance) running in an Amazon Web Services data center. This computer's only job is to run the wiki software.
-*   **The Appliances (Docker):** Inside the kitchen, there are two main appliances running side-by-side. These are managed by a system called Docker Compose.
-    1.  **The Chef (Wiki.js software):** This appliance actually prepares the webpage you asked for.
-    2.  **The Pantry (PostgreSQL Database):** This appliance stores all the wiki content—the pages, user accounts, and settings. The Chef gets all its ingredients from here.
-*   **The Secret Passage (SSM Session Manager):** There is no public SSH access to the server. For security, developers don't log into the server from the open internet. Instead, they use a secure, private tunnel called SSM Session Manager to perform maintenance. This is like the restaurant manager using a special key to a private back door.
+Imagine Wiki.js as a special website that helps teams share information. This website lives on a powerful virtual computer in Amazon's cloud (AWS EC2).
 
-In short: A user's request goes through the secure CloudFront bouncer to the EC2 kitchen, where the Wiki.js chef and PostgreSQL pantry work together in their Docker appliance to build the webpage and send it back.
+Here's how it generally works:
 
-## What Can Go Wrong and Why?
+1.  **You Open Your Browser:** When you type the wiki's address (like `wiki.yourcompany.com`) into your web browser, your request first goes to a global delivery service called **CloudFront**. Think of CloudFront as a smart traffic cop that makes sure your request goes to the right place quickly and securely.
+2.  **Security Check:** CloudFront encrypts your connection (HTTPS) to keep your information private and adds extra security rules to protect the website.
+3.  **Talking to the Computer:** CloudFront then sends your request to our virtual computer (EC2 instance) in Australia (ap-southeast-2).
+4.  **Running the Wiki:** On this virtual computer, two special programs are running inside containers:
+    *   One program is the **Wiki.js application** itself, which handles displaying pages and editing content.
+    *   The other is a **PostgreSQL database**, which is like a smart filing cabinet that stores all the wiki's pages, user accounts, and other data. All the important wiki data is saved securely to a special hard drive (EBS volume) attached to the virtual computer.
+5.  **Getting Your Page:** The Wiki.js application talks to the database to get the content you requested, and then sends it back through CloudFront to your browser.
 
-Like any system, things can sometimes break. Here are the most common failure points.
+**Cost Savings:** To save money, the virtual computer can be set to automatically turn off at night and turn back on in the morning. This is handled by a special AWS scheduler.
 
-### The Bouncer (CloudFront) Has a Problem
-*   **What it looks like:** You might see an error page from "CloudFront" before you even get to the wiki. Common errors are "502 Bad Gateway" or "504 Gateway Timeout".
-*   **Why it happens:**
-    *   **502 Bad Gateway:** The bouncer can't talk to the kitchen. This usually means the EC2 server is offline, or the Wiki.js application on it has crashed.
-    *   **504 Gateway Timeout:** The bouncer knocked on the kitchen door, but the chef took too long to answer. This means the server is probably overwhelmed, very busy, or stuck on a task.
+**How We Fix Things:** If we ever need to look directly at the virtual computer (EC2 instance), we use a secure tool called **SSM Session Manager**, which is like a remote control that doesn't require us to open up any risky connections.
 
-### The Kitchen (EC2 Server) is Down
-*   **What it looks like:** The site won't load, and you'll likely see a CloudFront error page (502 or 504).
-*   **Why it happens:** The virtual computer itself could have an issue with its hardware (rare), or it might have failed to start up correctly after a maintenance window.
+## What Can Go Wrong and Why
 
-### The Appliances (Docker Containers) Aren't Working
-*   **What it looks like:** The site gives a "502 Bad Gateway" error from CloudFront.
-*   **Why it happens:** The `docker-compose` system that runs the Wiki.js and PostgreSQL containers might have failed. One of the two containers (the chef or the pantry) could have crashed. The Wiki.js application can't work without its database.
+Most issues relate to the wiki not being accessible or performing as expected. Here are the main things that can go wrong:
 
-### The Website Certificate Has Expired
-*   **What it looks like:** Your web browser (Chrome, Firefox, Safari) shows a big, scary security warning like "Your connection is not private" or "NET::ERR_CERT_DATE_INVALID".
-*   **Why it happens:** The security certificate (from ACM) that proves the site is legitimate has expired. These are usually renewed automatically, but sometimes that process can fail.
+### 1. Website Becomes Unavailable After a Restart
 
-## How to Identify and Handle Errors
+*   **What happens:** The wiki website completely stops working after the virtual computer (EC2 instance) turns off and then turns back on (e.g., overnight). Users see an error page or a message that the site cannot be reached.
+*   **Why:** CloudFront needs a specific address (like a public DNS name) to find the virtual computer that hosts the wiki. When the virtual computer stops and starts, AWS often gives it a *new* address. CloudFront isn't automatically updated with this new address, so it keeps trying to send requests to the old, non-existent address.
 
-| What You See | What It Means | What Support Can Do | What Needs a Developer |
-| :--- | :--- | :--- | :--- |
-| A CloudFront "502 Bad Gateway" error | The EC2 server or the Wiki.js application on it is offline or has crashed. | 1. Note the time of the error. 2. Escalate to the development team immediately. This is a critical outage. | Developer needs to use SSM Session Manager to connect to the server, check the status of the `docker` containers, and restart the service or server. |
-| A CloudFront "504 Gateway Timeout" error | The server is online but is too slow or overloaded to respond in time. | 1. Note the time of the error. 2. Escalate to the development team. This indicates a performance problem. | Developer needs to investigate server performance (CPU, memory) and check application logs for slow processes. |
-| Browser security warning ("Connection not private") | The website's TLS/SSL certificate has expired. | 1. Take a screenshot of the error. 2. **Do not** tell users to click past the warning. 3. Escalate to the development team immediately. | Developer needs to investigate why the ACM certificate's automatic renewal failed and fix it. This is an urgent issue. |
-| A Wiki.js-branded error page | The underlying server is fine, but the wiki application itself has encountered an internal error. | 1. Take a screenshot. 2. Try to get the steps the user took to trigger the error. 3. Escalate to the development team. | Developer needs to check the Wiki.js application logs on the server to diagnose the software bug. |
-| The site is just very slow | The server is likely experiencing high load. | 1. Ask if it's slow for everyone or just one user. 2. Note the time and escalate to the development team. | Developer needs to analyze server performance and may need to resize the server to a more powerful type. |
+### 2. Website is Slow or Unresponsive
+
+*   **What happens:** Pages load very slowly, or actions within the wiki take a long time to complete.
+*   **Why:**
+    *   **Underpowered computer:** The virtual computer (EC2 instance) might not be powerful enough to handle the current amount of users or tasks.
+    *   **Database issues:** The database might be overloaded or experiencing problems.
+    *   **Network congestion:** While less common for a single instance, network issues could contribute.
+
+### 3. Security Alerts
+
+*   **What happens:** Security scanning tools might flag issues, or an external audit points out potential vulnerabilities.
+*   **Why:**
+    *   **Unencrypted internal traffic:** Currently, the connection between CloudFront and the virtual computer (EC2) uses unencrypted HTTP. While CloudFront handles the encryption for users, internal traffic is not encrypted, which could be a risk in very specific scenarios.
+    *   **Overly broad permissions:** The virtual computer is allowed to send *any* traffic out to the internet, which is not ideal from a security perspective. Similarly, some administrative access permissions are broader than strictly necessary.
+    *   **Data not encrypted at rest:** The main hard drive (EBS volume) where wiki data is stored is not encrypted. This is a general security best practice.
+
+## How to Identify and Interpret Errors or Failure States
+
+When a user reports an issue, here’s how to gather initial information:
+
+### Is the Wiki.js Website Loading?
+
+*   **Symptom:** Users report they cannot access `wiki.yourcompany.com` (or the configured domain). They see browser errors like "This site can't be reached," "DNS\_PROBE\_FINISHED\_NXDOMAIN," or "502 Bad Gateway" / "504 Gateway Timeout" from CloudFront.
+*   **Interpretation:**
+    *   **"Site can't be reached" / DNS errors:** Indicates a problem with the domain name not pointing correctly, or CloudFront itself isn't resolving.
+    *   **502 / 504 errors from CloudFront:** This often means CloudFront *can* be reached, but it can't connect to our virtual computer (EC2 instance) or the virtual computer isn't responding in time. This is a strong indicator of the "EC2 Public DNS changed" issue.
+    *   **"Connection refused" / "ERR\_CONNECTION\_REFUSED":** The virtual computer might be down or the firewall is blocking CloudFront.
+
+### Is the Virtual Computer (EC2 Instance) Running?
+
+*   **Symptom:** The website is down, and you suspect the EC2 instance might be stopped.
+*   **Interpretation:** If the instance is in a "stopped" state when it should be running (during business hours), the scheduler might have failed, or the schedule is incorrect. If it's running but the website is down, the problem is likely with CloudFront's origin or the Docker containers on the EC2.
+
+### Is the Website Slow?
+
+*   **Symptom:** Users complain about long loading times or unresponsiveness.
+*   **Interpretation:** This is harder to diagnose without technical tools. It could indicate the EC2 instance is struggling, or the database is under stress.
+
+## What Actions Support Can Take vs. What Requires a Developer
+
+### Support Team Actions (Initial Troubleshooting)
+
+1.  **Check Website Availability:**
+    *   Try accessing `wiki.yourcompany.com` from your own browser.
+    *   Use an online tool like `downforeveryoneorjustme.com` to see if the site is down for everyone or just the reporting user.
+2.  **Verify EC2 Instance Status (Requires AWS Console Access - Read-Only):**
+    *   Log into the AWS Console.
+    *   Navigate to **EC2 > Instances**.
+    *   Find the instance named `*-wiki-ec2` (the exact name will vary but will contain `wiki-ec2`).
+    *   Check its "Instance State" column. Is it `running` or `stopped`?
+    *   If it's `stopped` during working hours, and the website is down, inform a developer immediately.
+3.  **Check CloudFront Distribution Status (Requires AWS Console Access - Read-Only):**
+    *   Log into the AWS Console.
+    *   Navigate to **CloudFront > Distributions**.
+    *   Find the distribution associated with `wiki.yourcompany.com`.
+    *   Check its "Last modified" time. If it was modified recently and the site is down, this could be a factor.
+    *   Under the "Origins" tab, note the "Origin Domain Name". If the EC2 instance has restarted, this domain name will likely be stale.
+4.  **Confirm DNS Records (Requires DNS Management Access - Read-Only):**
+    *   Check the CNAME record for `wiki.yourcompany.com` in Route53 or your domain provider. It should point to the CloudFront distribution's domain name (e.g., `dxxxxxxxxxxxxxx.cloudfront.net`). If this is incorrect, the site won't load.
+
+### Developer Required Actions
+
+Any issue requiring changes to the AWS infrastructure (Terraform code) or deep inspection of the EC2 instance's internal state (Docker logs, system logs) requires a developer.
+
+*   **Website Unavailable (after EC2 restart):** A developer must update the Terraform code to use a static IP address (Elastic IP) or an Application Load Balancer (ALB) as the CloudFront origin. This is a critical fix.
+*   **Security Concerns:** Any remediation for unencrypted traffic, overly broad permissions, or unencrypted EBS volumes requires a developer to modify and re-deploy the Terraform configuration.
+*   **Performance Issues (Slowness):** A developer would need to investigate resource utilization on the EC2 instance, check database performance, and potentially scale up the EC2 instance type.
+*   **Docker Container Issues:** If the EC2 instance is running but the Wiki.js application or database isn't starting correctly inside Docker, a developer will need to use SSM Session Manager to troubleshoot on the instance itself.
 
 ## Key Log and Monitoring Locations
 
-The support team does not have direct access to logs. This information is for your awareness of where developers will look when you escalate an issue.
+For detailed investigation, a developer will typically check these areas:
 
-*   **Amazon CloudWatch:** This is the primary monitoring service in AWS. Developers will look here for:
-    *   **EC2 Instance Metrics:** CPU Utilization, Memory, Disk Space. A spike in CPU or running out of disk space are common causes of failure.
-    *   **Application Logs:** The `user-data.sh.tftpl` script configures the system, but it does not set up a specific agent to forward Docker logs to CloudWatch. A developer will need to connect to the instance via SSM to view logs directly from the Docker containers.
-*   **AWS Health Dashboard:** This dashboard reports on the overall health of AWS services. If the whole region is having a problem, it will be posted here.
+*   **AWS CloudWatch Logs (for EC2):** System logs, application logs from Docker containers (if configured).
+*   **AWS CloudFront Access Logs:** If enabled, these logs show every request made to CloudFront and how it was handled, including error codes.
+*   **AWS Console (EC2 Instance Monitoring Tab):** Provides CPU utilization, network I/O, and disk usage metrics for the virtual computer.
+*   **SSM Session Manager:** Allows a developer to get a secure shell directly into the EC2 instance to check Docker logs (`docker logs <container_name>`), system processes, and other application-specific logs.
 
-## FAQ
+## Frequently Asked Questions (FAQ)
 
-### The wiki is down, what should I do?
-If you see a CloudFront error (502/504), a browser security warning, or the site just won't load, the issue requires a developer to fix. Please follow the escalation steps in the table above and report it immediately.
+### Q1: The wiki page says "This site can't be reached" or "502 Bad Gateway". What do I do?
 
-### A user says the wiki is slow. What can I do?
-First, try to confirm if it is slow for you as well. This helps rule out a problem with the user's local network. If it is slow for everyone, the server is likely under heavy load. This is not something support can fix directly. Please escalate to the development team so they can investigate the server's performance.
+*   **A:** First, try reloading the page. If that doesn't work, this usually means the virtual computer hosting the wiki has restarted, and CloudFront can no longer find it. Please report this to a developer immediately.
 
-### I'm getting a security warning in my browser. Is it safe to continue?
-**No.** Do not click past security warnings. A warning message almost always means the site's security certificate has expired. While the underlying data is likely fine, it's a security risk that must be fixed. Escalate to the development team immediately.
+### Q2: Is my data safe on the wiki?
+
+*   **A:** Yes, all traffic to and from your browser is encrypted (HTTPS). The data in the database is stored on a dedicated hard drive for the virtual computer. While there are some areas identified for security improvements (like encrypting the hard drive and restricting internal network traffic more), these are being addressed by developers to ensure a high level of security.
+
+### Q3: Why does the wiki sometimes go offline overnight?
+
+*   **A:** To save costs, the virtual computer (EC2 instance) hosting the wiki is often configured to automatically shut down after business hours and restart before the next workday. If you find it's offline during working hours, please report it, as there might be an issue with the automated schedule.
+
+### Q4: I'm seeing an outdated page, even after someone updated it.
+
+*   **A:** CloudFront sometimes caches (remembers) old versions of pages. While caching is mostly disabled for this wiki, you can try a "hard refresh" in your browser (Ctrl+F5 on Windows/Linux, Cmd+Shift+R on Mac) to force it to load the latest version. If the problem persists, it might indicate a more complex caching issue that a developer needs to investigate.

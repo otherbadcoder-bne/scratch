@@ -1,103 +1,96 @@
-# Wiki.js Deployment Architecture
+# Wiki.js Deployment Architecture Overview
+
+This document provides a technical overview of the Wiki.js deployment within the `scratch` repository. It covers the system's architecture, data flow, the role of AWS services, key design decisions, and the deployment model.
 
 ## System Overview
 
-This document outlines the architecture for the Wiki.js deployment, an independent project managed within the `scratch` repository. The system provides a single Wiki.js instance running on AWS, provisioned and managed entirely through Terraform. The design prioritizes security, cost-efficiency, and automation.
+This project deploys a standalone Wiki.js instance on AWS using Terraform. It is designed as an independent module within a personal workspace for infrastructure-as-code experiments. The architecture prioritizes simplicity, security, cost-efficiency, and automation for a single Wiki.js instance.
 
-The application itself, along with its PostgreSQL database, runs within Docker containers on a single EC2 instance. Public access is fronted by a CloudFront distribution, which provides TLS termination and applies security headers.
+The application, along with its PostgreSQL database, runs within Docker containers on a single EC2 instance. Public access is facilitated by an AWS CloudFront distribution, which handles TLS termination and applies security headers. Management access to the EC2 instance is exclusively via SSM Session Manager.
 
 ## Component Diagram
 
-```mermaid
-graph TD
-    subgraph "Internet User"
-        User[Browser]
-    end
-
-    subgraph "AWS Cloud"
-        subgraph "Global Services"
-            CF[CloudFront Distribution<br/>Aliases: var.domain_name]
-            ACM[ACM Certificate<br/>Region: us-east-1]
-        end
-
-        subgraph "VPC (ap-southeast-2)"
-            subgraph "Public Subnet"
-                EC2[EC2 Instance<br/>Type: var.instance_type]
-                EC2 -- Docker --> WikiContainer[Wiki.js Container]
-                EC2 -- Docker --> DBContainer[PostgreSQL Container]
-                DBContainer -- Mounts --> EBS[EBS Volume (db-data)]
-            end
-        end
-
-        subgraph "Management & Automation"
-            Scheduler[EventBridge Scheduler<br/>CRON: Stop/Start EC2]
-            SSM[Systems Manager<br/>Session Manager for Shell Access]
-        end
-    end
-
-    User -- HTTPS/443 --> CF
-    CF -- Uses --> ACM
-    CF -- HTTP/3000<br/>(Origin Request) --> EC2
-
-    EC2 -- Manages --> WikiContainer
-    EC2 -- Manages --> DBContainer
-    Scheduler -- "ssm:Start/StopInstances" --> EC2
-    Admin[Admin User] -- "aws ssm start-session" --> SSM -- Session --> EC2
+```
++------------------+     HTTPS/443     +-----------------------+     HTTP/3000     +----------------------+
+|   Internet User  |------------------>| AWS CloudFront        |------------------->| AWS EC2 Instance     |
+|     (Browser)    |                   | (Global CDN, TLS Term)|                    | (Amazon Linux 2023)  |
++------------------+                   +-----------+-----------+                    |                      |
+                                                   |                                | +------------------+ |
+                                                   |                                | | Docker Compose   | |
+                                                   |                                | | - Wiki.js        | |
+                                                   |                                | | - PostgreSQL     | |
+                                                   |                                | +------------------+ |
+                                                   |                                |                      |
+                                                   |                                +----------+-----------+
+                                                   |                                           |
+                                                   |          (SSM Session)                    |
+                                                   +<------------------------------------------+
+                                                   |        AWS Systems Manager                |
+                                                   |          (Session Manager)                |
+                                                   |                                           |
+                                                   +------------------------------------------->
+                                                           AWS EventBridge Scheduler
+                                                           (EC2 Stop/Start Cron)
 ```
 
-## Data Flow
+## Data Flow End-to-End
 
-1.  **User Request**: A user accesses the wiki by navigating to `var.domain_name` in their browser. The request is sent over HTTPS (port 443) to AWS CloudFront.
-2.  **CloudFront**: The CloudFront distribution terminates the TLS connection using an ACM certificate. It forwards the request to the origin—the EC2 instance—over HTTP on port 3000. Caching is disabled, but security headers (HSTS, XSS protection, etc.) are injected into the response.
-3.  **EC2 & Security Group**: The request from the CloudFront managed prefix list is allowed by the EC2 instance's security group on TCP port 3000.
-4.  **Docker & Application**: The EC2 instance, running Amazon Linux 2023, is configured via user data to run Docker Compose. The request is received by the `ghcr.io/requarks/wiki:2` container.
-5.  **Database**: The Wiki.js application communicates with the `postgres:15-alpine` container over the internal Docker network to query or persist data. The PostgreSQL data is persisted on the host's EBS volume via a Docker volume mount (`db-data`).
-6.  **Response**: The response travels back through the same path to the user.
+1.  **User Request**: A user accesses the Wiki.js instance via a specified domain name (e.g., `wiki.example.com`). The request is sent over HTTPS (port 443) to the AWS CloudFront distribution.
+2.  **CloudFront Processing**: CloudFront terminates the TLS connection using an ACM certificate provisioned in `us-east-1`. It then forwards the request to the EC2 instance origin over unencrypted HTTP on port 3000. Caching is disabled, but security headers are injected into the response.
+3.  **EC2 Security Group**: The EC2 instance's security group allows inbound TCP traffic on port 3000 only from the CloudFront managed prefix list.
+4.  **Docker & Application**: On the EC2 instance, Docker Compose orchestrates the `ghcr.io/requarks/wiki:2` container, which receives the request.
+5.  **Database Interaction**: The Wiki.js application communicates with the `postgres:15-alpine` container over the internal Docker network to perform database operations. PostgreSQL data is persisted on an EBS volume mounted via a Docker volume (`db-data`).
+6.  **Response**: The processed response travels back through CloudFront to the user's browser.
 
-Administrative access to the EC2 instance is handled exclusively via SSM Session Manager, avoiding the need for SSH keys or open SSH ports.
+Administrative access to the EC2 instance is conducted via AWS Systems Manager (SSM) Session Manager, providing secure shell access without direct SSH. An EventBridge Scheduler is configured to stop and start the EC2 instance during specified hours for cost optimization.
 
 ## AWS Services and Their Roles
 
-### Compute & Application Hosting
-*   **EC2**: A single instance (`t3.micro` by default) runs the Docker engine. The instance is launched in a public subnet and its AMI is dynamically sourced from the latest Amazon Linux 2023 SSM parameter.
-*   **Docker Compose**: Although not an AWS service, it is core to the application deployment, orchestrating the Wiki.js and PostgreSQL containers on the EC2 host.
-
-### Networking & Content Delivery
-*   **VPC**: A dedicated VPC (`10.0.0.0/16` by default) provides network isolation. It contains 3 public and 3 private subnets across three availability zones.
-*   **Internet Gateway**: Provides internet access for the public subnets.
-*   **Security Groups**: A security group (`*-wiki-sg`) acts as a stateful firewall for the EC2 instance, allowing ingress traffic only from the CloudFront origin-facing prefix list on port 3000.
-*   **Network ACLs**: Stateless firewalls are configured for public and private subnets, providing an additional layer of defense.
-*   **CloudFront**: Serves as the public entry point, providing TLS termination, redirecting HTTP to HTTPS, and enforcing security headers on responses.
-
-### Security & Identity
-*   **IAM**:
-    *   An **EC2 Instance Role** (`*-wiki-ec2`) is attached to the instance, granting it permissions to connect with the SSM service (`AmazonSSMManagedInstanceCore` policy).
-    *   A **Scheduler Role** (`*-wiki-scheduler`) is used by EventBridge to gain permissions to start and stop the EC2 instance via SSM Automation documents.
-*   **ACM (AWS Certificate Manager)**: Provisions and manages the public SSL/TLS certificate used by CloudFront. The certificate is created in `us-east-1` as required by the service.
+*   **EC2 (Elastic Compute Cloud)**: Hosts the Wiki.js and PostgreSQL Docker containers on a single `t3.micro` Amazon Linux 2023 instance.
+*   **VPC (Virtual Private Cloud)**: Provides network isolation (`10.0.0.0/16`) with 3 public and 3 private subnets across three availability zones.
+*   **CloudFront**: Acts as the public entry point, handling TLS termination, redirecting HTTP to HTTPS, and enforcing security headers.
+*   **ACM (AWS Certificate Manager)**: Provisions and manages the public SSL/TLS certificate for CloudFront, specifically in `us-east-1`.
+*   **IAM (Identity and Access Management)**:
+    *   **EC2 Instance Role**: Grants permissions (`AmazonSSMManagedInstanceCore`) for the instance to communicate with SSM.
+    *   **Scheduler Role**: Provides permissions for EventBridge to start and stop the EC2 instance via SSM Automation documents.
 *   **SSM (Systems Manager)**:
-    *   **Session Manager**: Provides secure, shell-based access to the EC2 instance without requiring SSH.
-    *   **Parameter Store**: Used to fetch the latest Amazon Linux 2023 AMI ID, ensuring the instance is always launched with an up-to-date image.
-
-### Automation & Cost Management
-*   **EventBridge Scheduler**: Implements a cost-saving schedule (`schedule_enabled = true` by default). It stops the EC2 instance on weekday evenings (7 PM AEST) and starts it on weekday mornings (5 AM AEST) using SSM Automation runbooks (`AWS-StopEC2Instances` and `AWS-StartEC2Instances`).
+    *   **Session Manager**: Facilitates secure, shell-based access to the EC2 instance without SSH keys.
+    *   **Parameter Store**: Used to dynamically retrieve the latest Amazon Linux 2023 AMI ID.
+*   **EventBridge Scheduler**: Automates the stopping and starting of the EC2 instance based on a cron schedule for cost savings.
+*   **Security Groups**: Stateful firewalls for the EC2 instance, restricting ingress to CloudFront on port 3000 and allowing unrestricted egress.
+*   **Network ACLs**: Stateless firewalls for public and private subnets, providing an additional layer of network defense.
+*   **Internet Gateway**: Enables internet connectivity for resources in public subnets.
 
 ## Infrastructure Design Decisions
 
-*   **Infrastructure as Code**: The entire infrastructure is defined declaratively using Terraform, enabling automated, repeatable, and version-controlled deployments.
-*   **Containerization**: Docker Compose is used to bundle the application and its database dependencies. This simplifies setup on the host, standardizes the application runtime, and makes local development consistent with the deployed environment.
-*   **Security-in-Depth**:
-    *   **TLS Offloading**: CloudFront, rather than the application server, handles TLS, centralizing certificate management and reducing computational load on the EC2 instance.
-    *   **No SSH Access**: Access is restricted to SSM Session Manager, which is authenticated via IAM. This eliminates the risks associated with SSH keys and open ports.
-    *   **Least Privilege Networking**: The EC2 security group only allows traffic from CloudFront's known IP ranges on the specific application port. The default VPC security group and NACL are configured to deny all traffic.
-    *   **Security Headers**: A CloudFront Response Headers Policy is used to enforce best-practice headers like HSTS, preventing certain client-side attacks.
-*   **Cost Optimization**: The EC2 instance is automatically stopped outside of typical business hours via an EventBridge schedule, significantly reducing compute costs for non-critical environments.
-*   **Parameterization**: Key configuration values like `domain_name`, `instance_type`, and `environment` are exposed as Terraform variables, allowing the module to be reused for different deployments.
-*   **Documented Security Exceptions**: Where security scanner recommendations (Trivy, Checkov) are not implemented, they are explicitly ignored in the code with documented justifications (e.g., cost vs. benefit for WAF, EBS encryption).
+*   **Infrastructure as Code (Terraform)**: The entire AWS infrastructure is defined and managed using Terraform, ensuring reproducibility and version control.
+*   **Docker Compose**: Used to orchestrate the Wiki.js application and its PostgreSQL database on a single EC2 instance for simplified deployment and management.
+*   **CloudFront for Public Access**: Leverages CloudFront for global content delivery, TLS termination, and security header enforcement.
+*   **SSM Session Manager for Administration**: Prioritizes security by disallowing SSH access and enforcing SSM Session Manager for server administration.
+*   **Automated Cost Optimization**: Implements an EventBridge Scheduler to automatically stop and start the EC2 instance outside of business hours.
+*   **Defense-in-Depth**: Utilizes multiple layers of security controls, including Security Groups and Network ACLs.
+*   **Explicit AWS Region for ACM**: ACM certificates for CloudFront are explicitly provisioned in `us-east-1` as required by AWS.
+*   **Dynamic AMI Selection**: Uses SSM Parameter Store to always retrieve the latest Amazon Linux 2023 AMI, ensuring instances are launched with up-to-date images.
+*   **Security Scanning Integration**: Pre-commit hooks and GitHub Actions integrate Trivy and Checkov for automated security and policy-as-code scanning.
 
 ## Deployment Model
 
-The infrastructure is deployed using Terraform. The repository is configured with a CI/CD pipeline using GitHub Actions (`terraform-ci.yml`) that triggers on pull requests to the `main` branch. The pipeline validates, lints, and runs a `terraform plan`, posting the output to the pull request for review before any changes are merged and applied.
+The deployment follows an Infrastructure as Code (IaC) model using Terraform.
+
+1.  **Terraform Configuration**: The infrastructure is defined across multiple `.tf` files within the `wiki.js/` directory (e.g., `main.tf`, `vpc.tf`, `ec2.tf`, `cloudfront.tf`).
+2.  **User Data Script**: The EC2 instance is configured at launch via a `user-data.sh.tftpl` script. This script installs Docker and Docker Compose, then uses the embedded `docker-compose.yml` content to deploy the Wiki.js and PostgreSQL containers.
+3.  **GitHub Actions CI**: The `terraform-ci.yml` workflow automates formatting, validation, linting, security checks, and Terraform plan generation on Pull Requests to `main`.
+4.  **Pre-Commit Hooks**: Local `pre-commit` hooks enforce code quality, security scanning (Trivy, Gitleaks, Checkov), Terraform standards (fmt, validate, tflint, terraform-docs), and Infracost analysis before commits and pushes.
 
 ## Environment Differences
 
-The Terraform configuration is designed to be environment-agnostic through the use of an `environment` variable (defaulting to `shared-services`). This variable is used to prefix or tag all resources, allowing multiple, isolated instances of the infrastructure to be deployed from the same codebase (e.g., for development, staging, or production). However, the provided source files describe a single, unified deployment configuration.
+The Terraform configuration includes an `environment` variable, which defaults to `"shared-services"`. This variable is primarily used for tagging AWS resources, allowing for logical grouping and identification across different deployment contexts (e.g., `production`, `development`). While explicit environment-specific configurations are not deeply nested, the tagging provides a mechanism to differentiate resources. The `schedule_enabled` variable also allows for environment-specific control over cost-saving schedules.
+
+## Notable Design Patterns
+
+*   **Infrastructure as Code**: Full infrastructure defined in Terraform.
+*   **Immutable Infrastructure (Partial)**: EC2 instances are configured via user data scripts at launch, promoting consistency. However, the use of scheduled stop/start and an Elastic IP (as a potential fix for origin issues) indicates some statefulness is tolerated for cost.
+*   **Twelve-Factor App Principles (Partial)**: Configuration (database credentials, domain name) is managed via environment variables (in Docker Compose) and Terraform variables, separating config from code.
+*   **Defense-in-Depth**: Multiple security layers including VPC, Subnets, Network ACLs, Security Groups, IAM roles, and CloudFront security headers.
+*   **Cost Optimization**: Automated scheduling of EC2 instance to reduce operational costs.
+*   **Single-Instance Application**: A simple deployment model with Wiki.js and PostgreSQL co-located on a single EC2 instance via Docker Compose.
