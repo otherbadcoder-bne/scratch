@@ -107,15 +107,45 @@ CONTEXT=$(discover_context_files)
 REPO_NAME=$(basename "${REPO_ROOT}")
 
 # ── gemini call with timeout ──────────────────────────────────────────────────
+
+# Quick preflight — one cheap call to catch quota exhaustion before spawning jobs.
+# Exits the whole script with a clear message and reset time if quota is hit.
+gemini_preflight() {
+  local out
+  out=$(gemini -p "Say OK" 2>&1) || {
+    if printf '%s' "$out" | grep -qi "exhausted\|quota\|capacity"; then
+      local reset
+      reset=$(printf '%s' "$out" | grep -oE 'reset after [0-9hm ]+s' | head -1 || true)
+      warn "Gemini quota exhausted.${reset:+ Your quota will reset after ${reset}.}"
+      exit 1
+    fi
+  }
+}
+
 call_gemini() {
   local prompt_file="$1"
+  local err_file
+  err_file=$(mktemp)
+  trap 'rm -f "${err_file}"; trap - RETURN' RETURN
+
   # Pipe via stdin to avoid shell-expanding special chars (${var}, backticks)
   # in source file content. -p "" enables headless mode; stdin is the prompt.
   perl -e "
     alarm(${TIMEOUT});
     open(STDIN, '<', \$ARGV[0]) or die \"cannot open: \$!\";
     exec('gemini', '-p', '');
-  " -- "${prompt_file}"
+  " -- "${prompt_file}" 2>"${err_file}" || {
+    local err
+    err=$(cat "${err_file}")
+    if printf '%s' "$err" | grep -qi "exhausted\|quota\|capacity"; then
+      local reset
+      reset=$(printf '%s' "$err" | grep -oE 'reset after [0-9hm ]+s' | head -1 || true)
+      warn "Gemini quota exhausted.${reset:+ Your quota will reset after ${reset}.}"
+      exit 1
+    fi
+    [[ -s "${err_file}" ]] && warn "$(cat "${err_file}")"
+    return 1
+  }
 }
 
 # ── document generator ────────────────────────────────────────────────────────
@@ -276,6 +306,8 @@ case "${TARGET}" in
   performance)   doc_performance   || FAILED=$((FAILED + 1)) ;;
   ai-plan)       doc_ai_plan       || FAILED=$((FAILED + 1)) ;;
   all)
+    # Preflight before spawning 8 parallel jobs — bail immediately on quota error.
+    gemini_preflight
     # Run all 8 docs in parallel; capture output per-doc then print in order.
     PARALLEL_OUTDIR=$(mktemp -d)
 

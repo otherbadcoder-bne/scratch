@@ -86,7 +86,9 @@ jobs:
         if: steps.freshness.outputs.generate == 'true'
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: bash scripts/generate-docs.sh all
+        run: |
+          mkdir -p ~/.gemini
+          bash scripts/generate-docs.sh all
 
       - name: Commit generated docs
         if: steps.freshness.outputs.generate == 'true'
