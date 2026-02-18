@@ -185,8 +185,20 @@ bold "=== AI Review (Gemini CLI) ==="
 info "Repo: ${REPO_NAME} | Stack: ${STACK} | Branch: ${CURRENT_BRANCH} vs ${BASE_BRANCH} | ${DIFF_LINES} lines"
 echo ""
 
-RESULT=$(printf '%s' "$PROMPT" | gemini 2>/dev/null) || {
-  warn "gemini returned non-zero — skipping AI review (push continues)"
+# Write prompt to temp file — avoids pipe/TTY detection issues with gemini CLI
+PROMPT_FILE=$(mktemp /tmp/ai-review-prompt.XXXXXX)
+printf '%s' "$PROMPT" > "${PROMPT_FILE}"
+trap 'rm -f "${PROMPT_FILE}"' EXIT
+
+# macOS-compatible timeout via perl (no GNU coreutils required)
+TIMEOUT=120
+RESULT=$(perl -e "alarm(${TIMEOUT}); exec(@ARGV)" -- gemini -p "$(cat "${PROMPT_FILE}")" 2>/dev/null) || {
+  CODE=$?
+  if [[ $CODE -eq 142 ]]; then
+    warn "gemini timed out after ${TIMEOUT}s — skipping AI review (push continues)"
+  else
+    warn "gemini returned non-zero (exit ${CODE}) — skipping AI review (push continues)"
+  fi
   exit 0
 }
 
@@ -194,6 +206,27 @@ echo "$RESULT"
 echo ""
 bold "=============================="
 echo ""
+
+# ── persist to .ai/review-log/ ───────────────────────────────────────────────
+SHA=$(git rev-parse --short HEAD)
+LOG_DIR="${REPO_ROOT}/.ai/review-log"
+# Sanitise branch name for use in filename
+SAFE_BRANCH="${CURRENT_BRANCH//\//-}"
+LOG_FILE="${LOG_DIR}/$(date +%Y-%m-%d)-${SAFE_BRANCH}-${SHA}.md"
+
+mkdir -p "${LOG_DIR}"
+
+# Use printf to avoid heredoc issues with special characters in $RESULT
+{
+  printf '# AI Review — %s @ %s\n' "${CURRENT_BRANCH}" "${SHA}"
+  printf 'Date: %s\n' "$(date -u +"%Y-%m-%d %H:%M UTC")"
+  printf 'Stack: %s\n' "${STACK}"
+  printf 'Diff: %s lines vs %s\n\n' "${DIFF_LINES}" "${BASE_BRANCH}"
+  printf '## Commits\n%s\n\n' "${COMMIT_LOG}"
+  printf '## Findings\n%s\n' "${RESULT}"
+} > "${LOG_FILE}" || warn "Could not write review log to ${LOG_FILE}"
+
+[[ -f "${LOG_FILE}" ]] && info "Review saved → ${LOG_FILE}"
 
 # ── gate ──────────────────────────────────────────────────────────────────────
 if echo "$RESULT" | head -1 | grep -q "^BLOCK:"; then

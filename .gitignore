@@ -38,8 +38,9 @@ Desktop.ini
 # Infracost
 .infracost/
 
-# Swark
-swark-output/
 
 #Jake Local Dev
 *.tfvars.*.local
+
+# Personal AI tool config (local only — project context lives in AGENTS.md)
+.cursorrules

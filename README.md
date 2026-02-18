@@ -86,5 +86,6 @@ CI runs on every PR to `main`. The following **repository secrets** must be conf
 | `AWS_SECRET_ACCESS_KEY` | Terraform CI | AWS credentials for `terraform plan` and tests |
 | `AWS_DEFAULT_REGION` | Terraform CI | AWS region (e.g. `ap-southeast-2`) |
 | `INFRACOST_API_KEY` | Infracost | API key from `infracost auth login` |
+| `GEMINI_API_KEY` | AI Review | Gemini API key from [Google AI Studio](https://aistudio.google.com/apikey) |
 
 > `GITHUB_TOKEN` is provided automatically — no setup needed.

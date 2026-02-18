@@ -29,6 +29,12 @@ Key files: `main.tf`, `vpc.tf`, `ec2.tf`, `cloudfront.tf`, `acm.tf`, `variables.
 ### Pre-commit hooks
 Defined in `.pre-commit-config.yaml` at the repo root.
 
+Activate with:
+```bash
+pre-commit install                        # commit-time hooks
+pre-commit install --hook-type pre-push   # pre-push AI review hook (required separately)
+```
+
 **At commit time** (fast, deterministic):
 1. **Terraform** — fmt, validate, tflint, terraform-docs, trivy
 2. **Infracost** — cost breakdown injected into project README between `<!-- BEGIN_INFRACOST -->` / `<!-- END_INFRACOST -->` markers
@@ -36,11 +42,12 @@ Defined in `.pre-commit-config.yaml` at the repo root.
 4. **Gitleaks** — secret scanning
 5. **Checkov** — policy-as-code (skips configured in each project's `.checkov.yml`)
 
-**At push time** (agentic, requires one-time setup: `pre-commit install --hook-type pre-push`):
+**At push time** (agentic):
 6. **AI review** (`scripts/ai-review.sh`) — calls Gemini CLI with the branch diff and commit log.
+   Dynamically discovers project context at runtime (tech stack, AGENTS.md, active hooks).
    Focuses on what static tools cannot catch: intent vs implementation, IAM logic flaws, architectural drift,
-   operational gaps, and cost surprises. Blocks the push if it responds with a `BLOCK:` line.
-   Override with `git push --no-verify` if needed.
+   operational gaps, and cost surprises. Saves output to `.ai/review-log/` and blocks the push if it
+   responds with a `BLOCK:` line. Override with `git push --no-verify` if needed.
 
 Hook ordering matters — generators (terraform-docs, infracost) run before file hygiene so whitespace gets cleaned in the same pass.
 
