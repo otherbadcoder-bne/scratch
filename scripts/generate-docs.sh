@@ -30,7 +30,16 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 DOCS_DIR="${REPO_ROOT}/.ai/docs"
 mkdir -p "${DOCS_DIR}"
 
-TARGET="${1:-all}"
+# Parse args — support both positional doc type and --auto-commit flag
+TARGET="all"
+AUTO_COMMIT=false
+for arg in "$@"; do
+  case "$arg" in
+    --auto-commit) AUTO_COMMIT=true ;;
+    *)             TARGET="$arg" ;;
+  esac
+done
+
 TIMEOUT=300  # doc generation needs more time than review
 
 # ── context discovery (same as ai-review.sh) ─────────────────────────────────
@@ -260,5 +269,19 @@ esac
 
 bold ""
 bold "=== Done ==="
-info "Review files in ${DOCS_DIR} before committing."
-info "On merge to main, publish-docs.yml will push them to Wiki.js."
+
+# ── auto-commit ───────────────────────────────────────────────────────────────
+if [[ "${AUTO_COMMIT}" == "true" ]]; then
+  git -C "${REPO_ROOT}" add "${DOCS_DIR}" 2>/dev/null || true
+  if ! git -C "${REPO_ROOT}" diff --cached --quiet 2>/dev/null; then
+    git -C "${REPO_ROOT}" commit --no-verify \
+      -m "docs: auto-generate documentation [skip ci]" \
+      2>/dev/null && info "Docs committed automatically" \
+      || warn "Auto-commit failed — docs saved to ${DOCS_DIR}, commit manually"
+  else
+    info "Docs unchanged — nothing to commit"
+  fi
+else
+  info "Review files in ${DOCS_DIR} then commit."
+  info "On merge to main, publish-docs.yml will push them to Wiki.js."
+fi

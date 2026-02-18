@@ -39,6 +39,10 @@ discover_context_files() {
     CLAUDE.md AGENTS.md .ai-review.md
     README.md CONTRIBUTING.md ARCHITECTURE.md
     .github/PULL_REQUEST_TEMPLATE.md
+    .ai/docs/architecture.md
+    .ai/docs/features.md
+    .ai/docs/developer-guide.md
+    .ai/docs/bug-list.md
   )
   for f in "${candidates[@]}"; do
     local path="${REPO_ROOT}/${f}"
@@ -233,6 +237,17 @@ if echo "$RESULT" | head -1 | grep -q "^BLOCK:"; then
   echo "Push blocked by AI review. Fix the issue above, then push again."
   echo "To override: git push --no-verify"
   exit 1
+fi
+
+# ── background doc generation ─────────────────────────────────────────────────
+# Spawn generate-docs.sh after a successful review — non-blocking, auto-commits output.
+# Runs silently in background; check .ai/generate-docs.log if something looks wrong.
+GENDOCS="${REPO_ROOT}/scripts/generate-docs.sh"
+if [[ -x "${GENDOCS}" ]]; then
+  info "Spawning doc generation in background..."
+  nohup bash "${GENDOCS}" all --auto-commit \
+    > "${REPO_ROOT}/.ai/generate-docs.log" 2>&1 &
+  disown
 fi
 
 exit 0
