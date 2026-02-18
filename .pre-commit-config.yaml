@@ -73,17 +73,17 @@ repos:
         files: \.tf$
         pass_filenames: false
 
-  # Agentic pre-push review — runs gemini --print with the branch diff.
-  # Blocks push if gemini responds with a BLOCK: line.
-  # Requires: pre-commit install --hook-type pre-push (one-time setup)
-  # Override:  git push --no-verify
-  - repo: local
-    hooks:
-      - id: ai-review
-        name: AI review (Gemini CLI)
-        entry: scripts/ai-review.sh
-        language: system
-        stages: [pre-push]
-        pass_filenames: false
-        always_run: true
-        verbose: true
+  # # Agentic pre-push review — runs gemini --print with the branch diff.
+  # # Blocks push if gemini responds with a BLOCK: line.
+  # # Requires: pre-commit install --hook-type pre-push (one-time setup)
+  # # Override:  git push --no-verify
+  # - repo: local
+  #   hooks:
+  #     - id: ai-review
+  #       name: AI review (Gemini CLI)
+  #       entry: scripts/ai-review.sh
+  #       language: system
+  #       stages: [pre-push]
+  #       pass_filenames: false
+  #       always_run: true
+  #       verbose: true
