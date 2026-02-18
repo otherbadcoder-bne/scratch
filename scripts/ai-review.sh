@@ -139,7 +139,7 @@ trap 'rm -f "${PROMPT_FILE}"' EXIT
 
 # macOS-compatible timeout via perl (no GNU coreutils required)
 TIMEOUT=120
-RESULT=$(perl -e "alarm(${TIMEOUT}); exec(@ARGV)" -- gemini -p "$(cat "${PROMPT_FILE}")" 2>/dev/null) || {
+RESULT=$(perl -e "alarm(${TIMEOUT}); exec(@ARGV)" -- gemini -m gemini-2.5-flash -p "$(cat "${PROMPT_FILE}")" 2>/dev/null) || {
   CODE=$?
   if [[ $CODE -eq 142 ]]; then
     warn "gemini timed out after ${TIMEOUT}s — skipping AI review (push continues)"
