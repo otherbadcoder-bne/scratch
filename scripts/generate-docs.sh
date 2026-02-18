@@ -112,7 +112,7 @@ REPO_NAME=$(basename "${REPO_ROOT}")
 # Exits the whole script with a clear message and reset time if quota is hit.
 gemini_preflight() {
   local out
-  out=$(gemini -m gemini-2.5-flash -p "Say OK" 2>&1) || {
+  out=$(gemini -m gemini-2.5-flash --approval-mode plan -p "Say OK" 2>&1) || {
     if printf '%s' "$out" | grep -qi "exhausted\|quota\|capacity"; then
       local reset
       reset=$(printf '%s' "$out" | grep -oE 'reset after [0-9hm ]+s' | head -1 || true)
@@ -133,7 +133,7 @@ call_gemini() {
   perl -e "
     alarm(${TIMEOUT});
     open(STDIN, '<', \$ARGV[0]) or die \"cannot open: \$!\";
-    exec('gemini', '-m', 'gemini-2.5-flash', '-p', '');
+    exec('gemini', '-m', 'gemini-2.5-flash', '--approval-mode', 'plan', '-p', '');
   " -- "${prompt_file}" 2>"${err_file}" || {
     local err
     err=$(cat "${err_file}")
