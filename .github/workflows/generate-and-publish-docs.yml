@@ -4,9 +4,14 @@ on:
   push:
     branches: [main]
     paths-ignore:
-      - ".ai/docs/**"
       - ".ai/review-log/**"
       - ".github/workflows/generate-and-publish-docs.yml"
+  workflow_dispatch:
+    inputs:
+      force:
+        description: "Force regenerate and publish (skip freshness check)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -27,6 +32,12 @@ jobs:
       - name: Check whether docs need regenerating
         id: freshness
         run: |
+          if [[ "${{ inputs.force }}" == "true" ]]; then
+            echo "reason=forced via workflow_dispatch" >> "$GITHUB_OUTPUT"
+            echo "generate=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           DOCS_COMMIT=$(git log -1 --format="%H" -- .ai/docs/ 2>/dev/null || true)
 
           if [[ -z "$DOCS_COMMIT" ]]; then
@@ -57,6 +68,13 @@ jobs:
 
           echo "reason=docs are current (${AGE_DAYS}d old, no source changes)" >> "$GITHUB_OUTPUT"
           echo "generate=false" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether docs exist
+        id: docs_exist
+        run: |
+          count=$(find .ai/docs -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+          echo "exists=$([ "$count" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "Found $count doc file(s) in .ai/docs/"
 
       - name: Report freshness decision
         run: |
@@ -114,7 +132,7 @@ jobs:
           fi
 
       - name: Publish to Wiki.js
-        if: steps.freshness.outputs.generate == 'true'
+        if: steps.docs_exist.outputs.exists == 'true'
         env:
           WIKIJS_URL: ${{ secrets.WIKIJS_URL }}
           WIKIJS_API_KEY: ${{ secrets.WIKIJS_API_KEY }}
@@ -128,14 +146,9 @@ jobs:
           repo_url  = "https://github.com/${{ github.repository }}"
 
           DOC_MAP = {
-              "architecture":        ("GitHub-Projects/{repo}/architecture",       "Architecture Overview"),
-              "features":            ("GitHub-Projects/{repo}/features",           "Feature List"),
-              "developer-guide":     ("GitHub-Projects/{repo}/developer-guide",    "Developer Guide"),
-              "support-guide":       ("GitHub-Projects/{repo}/support-guide",      "Support Guide"),
-              "testing":             ("GitHub-Projects/{repo}/testing",            "Test Procedures"),
-              "bug-list":            ("GitHub-Projects/{repo}/bug-list",           "Bug List & Recommendations"),
-              "performance":         ("GitHub-Projects/{repo}/performance",        "Performance Improvements"),
-              "ai-development-plan": ("GitHub-Projects/{repo}/ai-development-plan","AI Development Plan"),
+              "architecture":    ("GitHub-Projects/{repo}/architecture",    "Architecture Overview"),
+              "developer-guide": ("GitHub-Projects/{repo}/developer-guide", "Developer Guide"),
+              "testing":         ("GitHub-Projects/{repo}/testing",         "Test Procedures"),
           }
 
           gql_url = os.environ["WIKIJS_URL"] + "/graphql"

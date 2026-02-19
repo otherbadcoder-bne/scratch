@@ -1,12 +1,11 @@
 #!/usr/bin/env bash
 # generate-docs.sh — universal agentic documentation generator
 #
-# Reads the codebase at runtime, generates 8 standard documents via Gemini CLI,
+# Reads the codebase at runtime, generates core documents via Gemini CLI,
 # and saves them to .ai/docs/ ready for Wiki.js publishing on merge to main.
 #
 # Usage:  scripts/generate-docs.sh [doc-type] [--auto-commit]
-#         doc-type: architecture | features | developer | support |
-#                   testing | bugs | performance | ai-plan | all (default)
+#         doc-type: architecture | developer | testing | all (default)
 # Flags:  --auto-commit   commit and push generated docs (used by CI)
 #
 # Output: .ai/docs/*.md
@@ -54,7 +53,7 @@ if [[ "${AUTO_COMMIT}" == "false" ]] && [[ -t 1 ]]; then
     LAST_DATE=$(git -C "${REPO_ROOT}" log -1 --format="%cd" --date=short -- ".ai/docs" 2>/dev/null)
 
     CHANGED=$(git -C "${REPO_ROOT}" diff --name-only "${LAST_COMMIT}..HEAD" -- \
-      '*.tf' '*.py' '*.sh' '*.md' 'Dockerfile*' 'docker-compose*' 2>/dev/null \
+      '*.tf' '*.py' '*.sh' '*.md' '*.yml' '*.yaml' 'Dockerfile*' 'docker-compose*' 2>/dev/null \
       | grep -v '^\.ai/' || true)
 
     bold ""
@@ -109,7 +108,6 @@ REPO_NAME=$(basename "${REPO_ROOT}")
 # ── gemini call with timeout ──────────────────────────────────────────────────
 
 # Quick preflight — one cheap call to catch quota exhaustion before spawning jobs.
-# Exits the whole script with a clear message and reset time if quota is hit.
 gemini_preflight() {
   local out
   out=$(gemini -m gemini-2.5-flash -p "Say OK" 2>&1) || {
@@ -206,29 +204,21 @@ PROMPT
 doc_architecture() {
   header "Architecture Overview"
   local files
-  files=$(collect_files '\.tf$' 'entrypoint.*\.py$' 'main\.py$' 'docker-compose.*\.ya?ml$' 'Dockerfile')
+  files=$(collect_files '\.tf$' 'entrypoint.*\.py$' 'main\.py$' 'docker-compose.*\.ya?ml$' 'Dockerfile' \
+                        '\.sh$' '\.github/workflows/.*\.ya?ml$' '\.pre-commit-config\.ya?ml$')
   generate "architecture" "Architecture Overview" "$files" \
     "Generate an architecture overview document for a technical audience.
 Include: system overview, ASCII component diagram, data flow end-to-end,
-AWS services and their roles, infrastructure design decisions, deployment model,
+AWS services and their roles (if applicable), infrastructure design decisions, deployment model,
 environment differences (dev/prod if visible), and any notable design patterns."
-}
-
-doc_features() {
-  header "Feature List"
-  local files
-  files=$(collect_files 'main\.py$' 'config\.py$' '\.tf$' 'README\.md$')
-  generate "features" "Feature List" "$files" \
-    "Generate a feature list document for a Product and Marketing audience — no code, no jargon.
-Include: what the product does in plain English, key capabilities grouped by theme,
-integration points with external systems (named clearly), configuration options visible
-to end users, and operational behaviours (notifications, error handling, etc.)."
 }
 
 doc_developer() {
   header "Developer Guide"
   local files
-  files=$(collect_files '\.py$' '\.tf$' 'docker.*\.ya?ml$' 'Dockerfile' 'pyproject\.toml$' 'requirements.*\.txt$' '\.pre-commit-config\.yaml$')
+  files=$(collect_files '\.py$' '\.tf$' 'docker.*\.ya?ml$' 'Dockerfile' 'pyproject\.toml$' \
+                        'requirements.*\.txt$' '\.pre-commit-config\.ya?ml$' \
+                        '\.sh$' '\.github/workflows/.*\.ya?ml$' 'package\.json$' 'Makefile$')
   generate "developer-guide" "Developer Guide" "$files" \
     "Generate a developer guide for engineers onboarding to this codebase.
 Include: repository structure, local setup instructions, environment variables and config,
@@ -237,21 +227,11 @@ PR conventions, code architecture walkthrough (key modules and their responsibil
 and common development tasks."
 }
 
-doc_support() {
-  header "Support Guide"
-  local files
-  files=$(collect_files 'traceback.*\.py$' 'email.*\.py$' 'logger\.py$' 'config\.py$' 'main\.py$')
-  generate "support-guide" "Support Guide" "$files" \
-    "Generate a support guide for a support team with no deep technical background.
-Include: how the system works in plain language, what can go wrong and why,
-how to identify and interpret errors or failure states, what actions support can take
-vs what requires a developer, key log/monitoring locations, and an FAQ of common issues."
-}
-
 doc_testing() {
   header "Test Procedures"
   local files
-  files=$(collect_files 'test.*\.py$' '.*_test\.py$' 'tftest\.hcl$' '.*spec.*')
+  files=$(collect_files 'test.*\.py$' '.*_test\.py$' 'tftest\.hcl$' '.*spec.*' \
+                        'test.*\.sh$' '.*_test\.sh$' '\.bats$')
   generate "testing" "Test Procedures" "$files" \
     "Generate a testing document for a QA or developer audience.
 Include: current test coverage (what is tested, what is not), how to run existing tests,
@@ -259,38 +239,10 @@ test environment requirements, a description of each test file and what it valid
 gaps in coverage, and recommendations for additional tests that would improve confidence."
 }
 
-doc_bugs() {
-  header "Bug List & Recommendations"
-  local files
-  files=$(collect_files '\.py$' '\.tf$' '\.sh$')
-  generate "bug-list" "Bug List & Recommendations" "$files" \
-    "Review the codebase for bugs, risks, and code quality issues.
-For each finding include: description, affected file and line if possible, severity
-(Critical/High/Medium/Low), and a recommended fix. Group by severity.
-Also include a section on technical debt and code quality patterns worth addressing."
-}
-
-doc_performance() {
-  header "Performance Improvements"
-  local files
-  files=$(collect_files 'entrypoint.*\.py$' 'main\.py$' '\.tf$' 'config\.py$' 'docker-compose.*\.ya?ml$')
-  generate "performance" "Performance Improvements" "$files" \
-    "Analyse the codebase for performance characteristics and improvement opportunities.
-Include: current performance profile (timeouts, resource allocations, concurrency model),
-identified bottlenecks or risks, specific recommendations with rationale, infrastructure
-sizing observations, and any quick wins vs longer-term improvements."
-}
-
-doc_ai_plan() {
-  header "AI Agentic Development Plan"
-  local files
-  files=$(collect_files '\.py$' '\.tf$' 'pyproject\.toml$' 'requirements.*\.txt$')
-  generate "ai-development-plan" "AI Agentic Development Plan" "$files" \
-    "Generate a plan for adopting AI-assisted and agentic development practices in this project.
-Include: current AI/LLM usage in the codebase, opportunities to expand AI assistance
-(code generation, review, testing, documentation), recommended tooling (Claude Code,
-Gemini CLI, etc.), proposed workflow changes, risks and mitigations, and a phased
-roadmap from current state to a mature AI-augmented development practice."
+# ── helper: does this repo have test files? ───────────────────────────────────
+has_tests() {
+  git -C "${REPO_ROOT}" ls-files 2>/dev/null \
+    | grep -qE 'test.*\.(py|sh|hcl|bats)$|.*_test\.(py|sh)$|.*spec\.'
 }
 
 # ── main ──────────────────────────────────────────────────────────────────────
@@ -303,51 +255,21 @@ FAILED=0
 
 case "${TARGET}" in
   architecture)  doc_architecture  || FAILED=$((FAILED + 1)) ;;
-  features)      doc_features      || FAILED=$((FAILED + 1)) ;;
   developer)     doc_developer     || FAILED=$((FAILED + 1)) ;;
-  support)       doc_support       || FAILED=$((FAILED + 1)) ;;
   testing)       doc_testing       || FAILED=$((FAILED + 1)) ;;
-  bugs)          doc_bugs          || FAILED=$((FAILED + 1)) ;;
-  performance)   doc_performance   || FAILED=$((FAILED + 1)) ;;
-  ai-plan)       doc_ai_plan       || FAILED=$((FAILED + 1)) ;;
   all)
     gemini_preflight
-
-    if [[ "${CI:-false}" == "true" ]]; then
-      # In CI, run sequentially to stay within free-tier rate limits (10 RPM).
-      # Parallel mode fires 8 simultaneous requests and exhausts the per-minute quota.
-      info "CI detected — running docs sequentially (rate-limit safe)"
-      doc_architecture  || FAILED=$((FAILED + 1))
-      doc_features      || FAILED=$((FAILED + 1))
-      doc_developer     || FAILED=$((FAILED + 1))
-      doc_support       || FAILED=$((FAILED + 1))
-      doc_testing       || FAILED=$((FAILED + 1))
-      doc_bugs          || FAILED=$((FAILED + 1))
-      doc_performance   || FAILED=$((FAILED + 1))
-      doc_ai_plan       || FAILED=$((FAILED + 1))
+    doc_architecture || FAILED=$((FAILED + 1))
+    doc_developer    || FAILED=$((FAILED + 1))
+    if has_tests; then
+      doc_testing    || FAILED=$((FAILED + 1))
     else
-      # Locally, run all 8 docs in parallel; capture output per-doc then print in order.
-      PARALLEL_OUTDIR=$(mktemp -d)
-
-      doc_architecture > "${PARALLEL_OUTDIR}/1.out" 2>&1 & PIDS=($!)
-      doc_features     > "${PARALLEL_OUTDIR}/2.out" 2>&1 & PIDS+=($!)
-      doc_developer    > "${PARALLEL_OUTDIR}/3.out" 2>&1 & PIDS+=($!)
-      doc_support      > "${PARALLEL_OUTDIR}/4.out" 2>&1 & PIDS+=($!)
-      doc_testing      > "${PARALLEL_OUTDIR}/5.out" 2>&1 & PIDS+=($!)
-      doc_bugs         > "${PARALLEL_OUTDIR}/6.out" 2>&1 & PIDS+=($!)
-      doc_performance  > "${PARALLEL_OUTDIR}/7.out" 2>&1 & PIDS+=($!)
-      doc_ai_plan      > "${PARALLEL_OUTDIR}/8.out" 2>&1 & PIDS+=($!)
-
-      for i in "${!PIDS[@]}"; do
-        wait "${PIDS[$i]}" || FAILED=$((FAILED + 1))
-        cat "${PARALLEL_OUTDIR}/$((i + 1)).out"
-      done
-      rm -rf "${PARALLEL_OUTDIR}"
+      info "No test files found — skipping Test Procedures"
     fi
     ;;
   *)
     warn "Unknown doc type: ${TARGET}"
-    echo "Valid types: architecture | features | developer | support | testing | bugs | performance | ai-plan | all"
+    echo "Valid types: architecture | developer | testing | all"
     exit 1
     ;;
 esac

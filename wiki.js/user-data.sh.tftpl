@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euxo pipefail
 
+# Set system timezone
+timedatectl set-timezone Australia/Brisbane
+
 # Install Docker
 dnf install -y docker
 systemctl enable --now docker
